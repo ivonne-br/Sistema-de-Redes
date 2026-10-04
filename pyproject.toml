@@ -1,0 +1,7 @@
+[project]
+name = "sistema-de-redes"
+version = "0.1.0"
+description = "Sistema de Análisis de Redes para la Toma de Decisiones"
+readme = "README.md"
+requires-python = ">=3.14,<3.15"
+dependencies = []

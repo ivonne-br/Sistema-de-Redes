@@ -66,3 +66,71 @@ Como punto de partida se consideran:
 | Dispositivos | Cantidad de equipos observados, identificación disponible, estado y tipo de conexión. |
 | Tráfico y uso | Tasas de transferencia, volumen de datos y participación por dispositivo, condicionados a fuentes verificables. |
 | Wi-Fi | Señal, canal y otros datos que puedan obtenerse del entorno y del equipo. |
+
+## Desarrollo local
+
+### Entorno comprobado
+
+- macOS.
+- Python 3.14.0.
+- Node.js 22.21.1.
+- Git 2.51.0.
+
+El backend inicial utiliza únicamente la biblioteca estándar de Python.
+Node.js se utilizará posteriormente para el desarrollo de la interfaz Vue.
+
+### Preparación inicial
+
+Desde la raíz del repositorio, crear el entorno virtual:
+
+```bash
+python3 -m venv .venv
+```
+
+Este paso se realiza una vez por entorno local.
+
+### Activación del entorno
+
+En cada nueva terminal utilizada para desarrollar:
+
+```bash
+source .venv/bin/activate
+```
+
+Comprobar el intérprete:
+
+```bash
+python -c "import sys; print(sys.executable)"
+```
+
+La ruta debe corresponder a `.venv/bin/python` dentro del repositorio.
+
+### Ejecución
+
+Desde la raíz del repositorio:
+
+```bash
+python -m backend
+```
+
+Resultado esperado:
+
+```text
+Backend del Sistema de Análisis de Redes iniciado.
+```
+
+Esta ejecución comprueba el punto de entrada del paquete.
+Todavía no inicia un servidor, descubre dispositivos ni mide conectividad.
+
+### Finalizar el uso del entorno
+
+```bash
+deactivate
+```
+
+Este comando desactiva el entorno en la terminal actual; no elimina sus archivos.
+
+### Archivos locales
+
+La carpeta `.venv` no se incorpora al repositorio.
+Las credenciales y los datos privados de la red tampoco deben incorporarse.
