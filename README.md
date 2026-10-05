@@ -122,6 +122,73 @@ Backend del Sistema de Análisis de Redes iniciado.
 Esta ejecución comprueba el punto de entrada del paquete.
 Todavía no inicia un servidor, descubre dispositivos ni mide conectividad.
 
+### Ejecutar una sonda individual
+
+Esta funcionalidad requiere macOS y el entorno virtual activo.
+
+Consultar la ayuda:
+
+```bash
+python -m backend sonda --help
+```
+
+Para enviar una solicitud ICMP a un destino IPv4 autorizado:
+
+```bash
+python -m backend sonda DIRECCION_IPV4
+```
+
+Sustituir DIRECCION_IPV4 por la dirección real del destino.
+No escribir literalmente ese marcador.
+
+Para consultar la puerta de enlace actual en macOS:
+
+```bash
+route -n get default
+```
+
+El campo gateway indica la puerta de enlace de la ruta consultada.
+
+El comando sonda devuelve un objeto JSON con:
+
+- destino: dirección IPv4 consultada.
+- inicio: fecha y hora de inicio, con zona horaria.
+- metodo: mecanismo utilizado.
+- espera_ms: plazo de respuesta configurado.
+- estado: resultado del intento.
+- rtt_ms: tiempo de ida y vuelta cuando existe una respuesta válida.
+- detalle: explicación adicional, cuando corresponde.
+
+Estados posibles:
+
+| Estado | Significado |
+| --- | --- |
+| respuesta_valida | Se reconoció una respuesta dentro del plazo. |
+| sin_respuesta | No se obtuvo respuesta dentro del plazo establecido. |
+| error_recoleccion | Ocurrió un error al ejecutar o interpretar la prueba. |
+
+Si no existe un RTT válido, rtt_ms es null; no se sustituye por cero.
+
+Una dirección inválida se rechaza antes de ejecutar la sonda.
+La validación del formato no demuestra que el destino exista o pertenezca
+a la red local.
+
+Una respuesta de la puerta de enlace no demuestra acceso a Internet.
+Una ausencia de respuesta tampoco confirma por sí sola una desconexión.
+
+### Ejecutar las pruebas automatizadas
+
+Desde la raíz del repositorio, con el entorno virtual activo:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+Las pruebas utilizan respuestas simuladas y no envían tráfico a la red.
+
+El resumen debe indicar que se ejecutaron pruebas y terminar con OK.
+Un resultado de cero pruebas no verifica el funcionamiento.
+
 ### Finalizar el uso del entorno
 
 ```bash
