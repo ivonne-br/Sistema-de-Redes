@@ -176,6 +176,54 @@ a la red local.
 Una respuesta de la puerta de enlace no demuestra acceso a Internet.
 Una ausencia de respuesta tampoco confirma por sí sola una desconexión.
 
+### Configuración de la sonda
+
+Los tiempos se definen y validan mediante `ConfiguracionSonda`,
+en `backend/configuracion.py`.
+
+| Parámetro | Valor predeterminado | Propósito |
+| --- | --- | --- |
+| `espera_ms` | 1000 ms | Plazo para aceptar una respuesta de la sonda. |
+| `limite_proceso_s` | 5 s | Límite de espera por la finalización del proceso `ping`. |
+
+Ambos parámetros deben ser enteros positivos; no se aceptan
+booleanos. El límite del proceso, convertido a milisegundos,
+debe ser mayor que la espera de respuesta.
+
+Un tipo incorrecto produce `TypeError`. Un valor no permitido
+o una relación inválida entre los tiempos produce `ValueError`.
+
+Al llamar a `ejecutar_sonda(destino)` se utiliza la configuración
+predeterminada. Desde código Python puede proporcionarse una
+configuración personalizada como segundo argumento.
+
+Ejemplo de construcción de una configuración; este fragmento
+no ejecuta ninguna sonda:
+
+```python
+from backend.configuracion import ConfiguracionSonda
+
+configuracion = ConfiguracionSonda(
+    espera_ms=2000,
+    limite_proceso_s=6,
+)
+```
+
+Los campos no pueden reasignarse después de crear la configuración.
+Para utilizar otros valores, se construye otra instancia.
+
+El comando `python -m backend sonda DIRECCION_IPV4` utiliza los
+valores predeterminados; todavía no ofrece argumentos para
+personalizar estos tiempos.
+
+Una respuesta cuyo RTT supera `espera_ms` se clasifica como
+`sin_respuesta`, sin RTT válido. Si se agota el límite del proceso,
+se devuelve `error_recoleccion`.
+
+El límite del proceso no es el intervalo entre sondas.
+Esta versión ejecuta una sola sonda por llamada y todavía
+no implementa monitoreo periódico.
+
 ### Ejecutar las pruebas automatizadas
 
 Desde la raíz del repositorio, con el entorno virtual activo:

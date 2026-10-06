@@ -7,18 +7,20 @@ import platform
 import re
 import subprocess
 from datetime import datetime, timezone
+from backend.configuracion import ConfiguracionSonda
 
-
-def ejecutar_sonda(destino):
+def ejecutar_sonda(destino, configuracion=None):
     """Ejecuta una solicitud ICMP hacia una dirección IPv4 en macOS."""
-    direccion = str(ipaddress.IPv4Address(destino)) # Validación de una dirección IPv4
+    if configuracion is None:
+        configuracion = ConfiguracionSonda()
 
+    direccion = str(ipaddress.IPv4Address(destino))
     # Diccionario para observar el resultado de la sonda
     resultado = {
         "destino": direccion,
         "inicio": datetime.now(timezone.utc).isoformat(),
         "metodo": "icmp_ping_macos",
-        "espera_ms": 1000,
+        "espera_ms": configuracion.espera_ms,
         "estado": "error_recoleccion",
         "rtt_ms": None,
         "detalle": None,
@@ -32,7 +34,7 @@ def ejecutar_sonda(destino):
         "/sbin/ping",
         "-n",
         "-c", "1", # Envía un solo paquete ICMP
-        "-W", "1000",
+        "-W", str(configuracion.espera_ms),
         direccion,
     ]
 
@@ -41,7 +43,7 @@ def ejecutar_sonda(destino):
             comando,
             capture_output=True,
             text=True,
-            timeout=5, # límite de tiempo de 5 segundos para la ejecución del comando
+            timeout=configuracion.limite_proceso_s,
             env={**os.environ, "LC_ALL": "C"}, # asegura que la salida esté en inglés para facilitar el análisis de la salida
         )
     except subprocess.TimeoutExpired:
