@@ -6,6 +6,7 @@ from datetime import datetime
 from unittest.mock import patch
 
 from backend.sonda import ejecutar_sonda
+from backend.configuracion import ConfiguracionSonda
 
 # Clase de pruebas para la función ejecutar_sonda. Se simula la salida del comando ping para probar diferentes escenarios.
 class PruebasSonda(unittest.TestCase):
@@ -108,6 +109,53 @@ class PruebasSonda(unittest.TestCase):
         self.comprobar_sin_rtt(ejecutar_sonda(self.destino), "error_recoleccion")
         self.proceso.assert_not_called()
 
+    def test_utiliza_configuracion_personalizada(self):
+        configuracion = ConfiguracionSonda(
+            espera_ms=2000,
+            limite_proceso_s=6,
+        )
+        self.simular_salida(
+            salida="64 bytes from 192.0.2.1: icmp_seq=0 ttl=64 time=1500 ms\n"
+        )
+
+        resultado = ejecutar_sonda(self.destino, configuracion)
+
+        self.assertEqual(resultado["espera_ms"], 2000)
+        self.assertEqual(resultado["estado"], "respuesta_valida")
+        self.assertEqual(resultado["rtt_ms"], 1500)
+        self.assertIsNone(resultado["detalle"])
+
+        self.proceso.assert_called_once()
+        argumentos, opciones = self.proceso.call_args
+        comando = argumentos[0]
+
+        self.assertEqual(comando[comando.index("-W") + 1], "2000")
+        self.assertEqual(opciones["timeout"], 6)
+
+    def test_respeta_el_plazo_personalizado(self):
+        configuracion = ConfiguracionSonda(
+            espera_ms=2000,
+            limite_proceso_s=6,
+        )
+
+        for rtt in (2000, 2001):
+            with self.subTest(rtt=rtt):
+                self.simular_salida(
+                    salida=(
+                        "64 bytes from 192.0.2.1: "
+                        f"icmp_seq=0 ttl=64 time={rtt} ms\n"
+                    )
+                )
+
+                resultado = ejecutar_sonda(self.destino, configuracion)
+
+                if rtt == 2000:
+                    self.assertEqual(
+                        resultado["estado"], "respuesta_valida"
+                    )
+                    self.assertEqual(resultado["rtt_ms"], 2000)
+                else:
+                    self.comprobar_sin_rtt(resultado, "sin_respuesta")
 
 if __name__ == "__main__":
     unittest.main()

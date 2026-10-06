@@ -2,7 +2,7 @@
 
 """Parámetros y validación de la sonda individual."""
 
-from dataclasses import dataclass 
+from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class ConfiguracionSonda:
