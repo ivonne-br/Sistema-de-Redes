@@ -224,6 +224,36 @@ El límite del proceso no es el intervalo entre sondas.
 Esta versión ejecuta una sola sonda por llamada y todavía
 no implementa monitoreo periódico.
 
+### Intérprete de entradas ARP
+
+La función `interpretar_linea_arp(linea)`, en `backend/arp.py`,
+recibe una línea de texto con el formato esperado de `arp -an`
+en macOS y devuelve un diccionario con:
+
+- `ipv4`: dirección IPv4 validada.
+- `mac`: dirección normalizada a seis componentes de dos caracteres
+  hexadecimales en minúsculas, o `None` para una entrada `(incomplete)`.
+- `interfaz`: interfaz indicada en la entrada.
+- `marcas`: lista de marcas presentes, como `ifscope` y `permanent`.
+- `tipo_enlace`: tipo de enlace mostrado por la fuente.
+
+Una línea no reconocida o una dirección IPv4 inválida produce
+`ValueError`. Una entrada incompleta reconocida conserva los
+demás campos y no se trata como un error de interpretación.
+
+El intérprete solo procesa el texto recibido: no ejecuta `arp`,
+no consulta la red ni procesa una tabla completa. Todavía no
+clasifica las entradas según el entorno ni cuenta dispositivos.
+Una asociación en la caché no confirma disponibilidad actual,
+y el tipo de enlace no permite deducir si el equipo remoto
+está conectado por cable o Wi-Fi.
+
+Las observaciones manuales y los criterios propuestos de clasificación
+se documentan en [Entorno de red local](docs/entorno_red_local.md).
+Las pruebas de `tests/test_arp.py` utilizan líneas ficticias para
+comprobar la extracción, la normalización de MAC, las entradas
+incompletas y el rechazo de entradas inválidas.
+
 ### Ejecutar las pruebas automatizadas
 
 Desde la raíz del repositorio, con el entorno virtual activo:
@@ -232,7 +262,8 @@ Desde la raíz del repositorio, con el entorno virtual activo:
 python -m unittest discover -s tests -v
 ```
 
-Las pruebas utilizan respuestas simuladas y no envían tráfico a la red.
+Las pruebas utilizan valores conocidos, textos ficticios y respuestas
+simuladas; no envían tráfico a la red.
 
 El resumen debe indicar que se ejecutaron pruebas y terminar con OK.
 Un resultado de cero pruebas no verifica el funcionamiento.

@@ -42,6 +42,11 @@ Las direcciones reales y MAC se omiten de esta evidencia compartida.
 
 ## Observación adicional de la caché ARP
 
+La consulta ARP descrita en esta sección se realizó en una red
+escolar con máscara /19. La identificación inicial corresponde
+a la red doméstica con máscara /24; son observaciones de
+entornos diferentes.
+
 ### Procedimiento
 
 Se consultó la tabla local mediante `arp -an`.
@@ -89,3 +94,38 @@ como momento de última respuesta del dispositivo.
 El sistema deberá identificar la interfaz, dirección local,
 máscara y puerta de enlace sin fijarlas en el código. Un cambio
 de red deberá iniciar un contexto de observación distinto.
+
+## Criterios propuestos para interpretar las entradas ARP
+
+### Datos que se conservarán
+
+Por consulta se registrarán la fuente, el momento de lectura
+y el contexto seleccionado: interfaz, IPv4 local, subred
+y puerta de enlace cuando esté disponible.
+
+Por entrada se conservarán:
+
+- Dirección IPv4.
+- Dirección MAC, si está disponible.
+- Interfaz.
+- Marcas mostradas por la fuente.
+- Clasificación y motivo del tratamiento aplicado.
+
+Las MAC válidas se representarán con seis componentes
+hexadecimales de dos caracteres, separados por dos puntos.
+Esta normalización no permite identificar de forma universal
+un dispositivo.
+
+### Límites de identidad y tiempo
+
+Varias IPv4 asociadas a una MAC no se fusionarán automáticamente
+como un único dispositivo. Tampoco se afirmará que representan
+equipos distintos únicamente por tener direcciones IPv4 diferentes.
+
+El momento de lectura indica cuándo se consultó la caché.
+No equivale a la última respuesta ni a una presencia recién
+comprobada del dispositivo.
+
+Una consulta fallida no se representará como una lista vacía
+obtenida correctamente. Una consulta sin entradas tampoco
+demuestra que no existan dispositivos en la red.
