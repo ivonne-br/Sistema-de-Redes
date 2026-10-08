@@ -45,3 +45,27 @@ def interpretar_linea_arp(linea):
         "marcas": campos["marcas"].split(),
         "tipo_enlace": campos["tipo_enlace"],
     }
+
+def interpretar_tabla_arp(texto):
+    """Interpreta texto ARP y conserva los errores por línea."""
+    entradas = []
+    errores = []
+
+    for numero_linea, linea in enumerate(texto.splitlines(), start=1):
+        if not linea.strip():
+            continue
+
+        try:
+            entrada = interpretar_linea_arp(linea)
+        except ValueError as error:
+            errores.append({
+                "numero_linea": numero_linea,
+                "detalle": str(error),
+            })
+        else:
+            entradas.append(entrada)
+
+    return {
+        "entradas": entradas,
+        "errores": errores,
+    }
