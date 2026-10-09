@@ -74,7 +74,6 @@ Una misma observación no deberá duplicarse por aparecer varias veces en la mis
 
 **Interpretación:** representa dispositivos observados, no una garantía de todos los dispositivos conectados. Una dirección IP puede cambiar y una MAC no se tratará como identificador universal e inmutable de una persona o equipo.
 
-
 ### M-04. Presencia y cambios de presencia
 
 Identificar nuevas observaciones y cambios en la visibilidad de un dispositivo.

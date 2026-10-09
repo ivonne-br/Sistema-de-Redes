@@ -1,6 +1,5 @@
 # Identificación inicial del entorno de red local
 
-
 1. Consultar la ruta predeterminada:
 
    ```bash

@@ -1,0 +1,12 @@
+{
+  "sonda": {
+    "espera_ms": 1000,
+    "limite_proceso_s": 5
+  },
+  "limite_contexto_s": 5,
+  "nivel_log": "INFO",
+  "memoria": {
+    "capacidad": 100,
+    "retencion_s": 600
+  }
+}

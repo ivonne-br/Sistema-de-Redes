@@ -1,6 +1,5 @@
 # Casos de uso del sistema
 
-
 - **Invitado:** persona que accede desde la red doméstica observada y consulta la información disponible sin credenciales administrativas.
 - **Administrador:** el mismo Invitado mientras dispone de autorización administrativa temporal para un router y su sesión. Conserva todas las capacidades de consulta.
 
@@ -123,7 +122,6 @@
 - **A3. Cancelación o autorización inválida:** no se envía el cambio. Si se requiere una nueva autorización, se realiza CU-04 y se solicita confirmar nuevamente.
 - **A4. Router rechaza la modificación:** se informa el rechazo sin anunciar que la contraseña cambió.
 - **A5. Pérdida de conexión durante el cambio:** se indica que puede ser necesario reconectar el equipo con la nueva contraseña. El resultado queda pendiente de verificación; no se repite automáticamente la modificación.
-
 
 **Resultado esperado:** la contraseña de la red seleccionada queda modificada y verificada cuando es posible, o la persona recibe un estado explícito de rechazo o verificación pendiente. No se modifican las credenciales administrativas del router.
 
