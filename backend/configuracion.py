@@ -3,6 +3,7 @@
 
 from dataclasses import dataclass, field
 import json
+import math
 from pathlib import Path
 
 @dataclass(frozen=True)
@@ -53,8 +54,28 @@ class ConfiguracionBackend:
     limite_contexto_s: int = 5
     nivel_log: str = "WARNING"
     memoria: ConfiguracionMemoria = field(default_factory=ConfiguracionMemoria)
+    intervalo_arp_s: float = 5.0
+    vigencia_arp_s: int = 90
+    ausencias_arp: int = 3
+    puerto_api: int = 8000
 
     def __post_init__(self):
+        if type(self.puerto_api) is not int:
+            raise TypeError("puerto_api debe ser un entero, sin booleanos.")
+        if not 0 <= self.puerto_api <= 65535:
+            raise ValueError("puerto_api debe estar entre 0 y 65535; 0 elige un puerto libre.")
+        if type(self.ausencias_arp) is not int:
+            raise TypeError("ausencias_arp debe ser un entero, sin booleanos.")
+        if self.ausencias_arp <= 0:
+            raise ValueError("ausencias_arp debe ser mayor que cero.")
+        if type(self.vigencia_arp_s) is not int:
+            raise TypeError("vigencia_arp_s debe ser un entero, sin booleanos.")
+        if self.vigencia_arp_s <= 0:
+            raise ValueError("vigencia_arp_s debe ser mayor que cero.")
+        if type(self.intervalo_arp_s) not in (int, float):
+            raise TypeError("intervalo_arp_s debe ser un número, sin booleanos.")
+        if not 0 < self.intervalo_arp_s <= 86400 or not math.isfinite(self.intervalo_arp_s):
+            raise ValueError("intervalo_arp_s debe ser finito, mayor que cero y como máximo 86400.")
         if not isinstance(self.memoria, ConfiguracionMemoria):
             raise TypeError("memoria debe ser una ConfiguracionMemoria.")
         if not isinstance(self.sonda, ConfiguracionSonda):
@@ -90,7 +111,7 @@ def interpretar_configuracion(texto):
         raise ValueError(f"JSON de configuración inválido en línea {error.lineno}, columna {error.colno}.") from None
     if not isinstance(datos, dict):
         raise ValueError("La configuración debe ser un objeto JSON.")
-    desconocidos = datos.keys() - {"sonda", "limite_contexto_s", "nivel_log", "memoria"}
+    desconocidos = datos.keys() - {"sonda", "limite_contexto_s", "nivel_log", "memoria", "intervalo_arp_s", "vigencia_arp_s", "ausencias_arp", "puerto_api"}
     if desconocidos:
         raise ValueError(f"Opciones desconocidas: {', '.join(sorted(desconocidos))}.")
     sonda = datos.get("sonda", {})
@@ -106,6 +127,10 @@ def interpretar_configuracion(texto):
     if desconocidos:
         raise ValueError(f"Opciones de memoria desconocidas: {', '.join(sorted(desconocidos))}.")
     return ConfiguracionBackend(
+        puerto_api=datos.get("puerto_api", 8000),
+        intervalo_arp_s=datos.get("intervalo_arp_s", 5.0),
+        vigencia_arp_s=datos.get("vigencia_arp_s", 90),
+        ausencias_arp=datos.get("ausencias_arp", 3),
         memoria=ConfiguracionMemoria(**memoria),
         sonda=ConfiguracionSonda(**sonda),
         limite_contexto_s=datos.get("limite_contexto_s", 5),

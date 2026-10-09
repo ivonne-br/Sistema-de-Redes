@@ -9,6 +9,29 @@ from uuid import uuid4
 from backend.arp import crear_contexto_arp, interpretar_tabla_arp, clasificar_entradas_arp
 
 
+def observar_consulta_arp(consulta_arp, *, consulta_contexto):
+    """Conserva el resultado directo, incluidos fallos, sin repetir el clasificador."""
+    if consulta_arp["estado"] not in {
+        "lectura_correcta", "lectura_parcial", "error_interpretacion",
+        "error_recoleccion", "sin_datos_visibles",
+    }:
+        raise ValueError("Estado de consulta ARP desconocido.")
+    observacion = observar_tabla_arp(
+        consulta_arp, consulta_contexto=consulta_contexto,
+        fuente=consulta_arp["fuente"], inicio_captura=consulta_arp["inicio_captura"],
+        fin_captura=consulta_arp["fin_captura"],
+    )
+    observacion["consulta_arp"] = deepcopy({
+        campo: valor for campo, valor in consulta_arp.items()
+        if campo not in ("entradas", "errores")
+    })
+    if consulta_arp["estado"] in ("error_recoleccion", "sin_datos_visibles"):
+        observacion["estado"] = consulta_arp["estado"]
+        observacion["resumen"]["por_categoria"] = None
+        observacion["resumen"]["vecinos_candidatos"] = None
+    return observacion
+
+
 def normalizar_contexto_observacion(contexto):
     """Valida y copia el contexto; calcula máscara y subred sin confiar en ellas."""
     if not isinstance(contexto, dict):
