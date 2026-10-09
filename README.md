@@ -241,11 +241,24 @@ Una línea no reconocida o una dirección IPv4 inválida produce
 `ValueError`. Una entrada incompleta reconocida conserva los
 demás campos y no se trata como un error de interpretación.
 
-El intérprete solo procesa el texto recibido: no ejecuta `arp`,
-no consulta la red ni procesa una tabla completa. Todavía no
-clasifica las entradas según el entorno ni cuenta dispositivos.
-Una asociación en la caché no confirma disponibilidad actual,
-y el tipo de enlace no permite deducir si el equipo remoto
+La función `interpretar_tabla_arp(texto)` procesa varias líneas
+y devuelve dos listas: `entradas` y `errores`.
+
+Las líneas vacías se omiten. Las entradas interpretables se
+conservan, incluidas las incompletas con `mac = None`.
+Cada error contiene `numero_linea`, contado desde 1 en el texto
+original, y `detalle`. Una línea inválida no impide procesar
+las siguientes.
+
+Un texto vacío produce ambas listas vacías. Un texto formado
+por líneas inválidas produce entradas vacías y errores.
+Este resultado describe la interpretación del texto, no el
+éxito de una consulta al sistema.
+
+Los intérpretes no ejecutan `arp` ni consultan la red.
+Todavía no clasifican las entradas según el entorno ni cuentan
+dispositivos. Una asociación en la caché no confirma disponibilidad
+actual, y el tipo de enlace no permite deducir si el equipo remoto
 está conectado por cable o Wi-Fi.
 
 Las observaciones manuales y los criterios propuestos de clasificación
