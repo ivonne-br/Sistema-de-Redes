@@ -1,8 +1,9 @@
-<!-- Presenta estado y diagnóstico ARP desde la API existente; no inicia sondas ni calcula métricas. diagnostico=1 muestra ARP técnico, no es autorización. -->
+<!-- Presenta respuestas locales y diagnóstico ARP; recibe el resumen HTTP de la API. diagnostico=1 muestra ARP técnico, no es autorización. -->
 <script setup>
 import { computed } from 'vue'
 import { useResumen } from './useResumen.js'
 import MemoriaArp from './components/MemoriaArp.vue'
+import BusquedaLocal from './components/BusquedaLocal.vue'
 
 const { respuesta, error, cargando, recuperada, recibida } = useResumen()
 const datos = computed(() => respuesta.value?.datos)
@@ -16,7 +17,7 @@ function numero(valor) { return valor ?? 'No disponible' }
 <template>
   <main>
     <header><p class="ceja">Consulta como invitado · instalación local</p><h1>Observación de red local</h1>
-      <p>Consulta del servicio local y de la calidad de sus observaciones. La caché ARP no es una lista de equipos conectados ni una medida del rendimiento de la red.</p>
+      <p>Respuestas recientes en la red local de esta computadora. La búsqueda no garantiza un inventario completo ni identifica qué equipos usan exactamente el mismo Wi‑Fi.</p>
     </header>
     <div role="status" aria-live="polite" class="aviso">
       <p v-if="cargando">Cargando la primera consulta…</p>
@@ -27,6 +28,11 @@ function numero(valor) { return valor ?? 'No disponible' }
       <p v-else>API accesible. Una consulta correcta no significa que la red esté saludable.</p>
     </div>
     <template v-if="datos">
+      <BusquedaLocal :busqueda="datos.busqueda_activa" :asociaciones="datos.presencia.asociaciones" :actualizada="!error" />
+      <p v-if="calidad.calidad_fuente === 'error_fuente' || calidad.calidad_fuente === 'parcial' || calidad.vigencia === 'desactualizado'" class="aviso">Las asociaciones IPv4–MAC no están disponibles con plena vigencia o integridad. Las respuestas ICMP de la tabla se comprueban por separado.</p>
+      <details v-if="mostrarDiagnostico" class="diagnostico">
+      <summary>Diagnóstico: caché ARP y eventos de la memoria (no es una lista de equipos conectados)</summary>
+      <p>Este detalle conserva observaciones para investigar cambios. Reiniciar Vue vuelve a consultar la misma memoria de Python; la caché de macOS también tiene su propio ciclo de vida.</p>
       <section aria-labelledby="estado"><h2 id="estado">¿Están disponibles el servicio y los datos?</h2>
         <dl class="indicadores">
           <div><dt>Monitoreo</dt><dd>{{ respuesta.monitoreo.estado }}</dd></div>
@@ -46,9 +52,6 @@ function numero(valor) { return valor ?? 'No disponible' }
         <p class="contexto">Contexto: <code>{{ calidad.id_contexto ?? 'No disponible' }}</code>. Cada tramo se mantiene separado, incluso al volver a una red anterior.</p>
         <p class="secundario">Respuesta recibida: {{ fecha(recibida) }}. Actualización: 5 segundos después de terminar cada consulta. La antigüedad la calcula Python.</p>
       </section>
-      <details v-if="mostrarDiagnostico" class="diagnostico">
-      <summary>Diagnóstico: caché ARP y eventos de la memoria (no es una lista de equipos conectados)</summary>
-      <p>Este detalle conserva observaciones para investigar cambios. Reiniciar Vue vuelve a consultar la misma memoria de Python; la caché de macOS también tiene su propio ciclo de vida.</p>
       <section aria-labelledby="vecinos"><h2 id="vecinos">¿Cuántas filas son vecinos candidatos?</h2>
         <dl class="indicadores">
           <div><dt>Filas de vecinos candidatos</dt><dd>{{ numero(datos.vecinos.cantidad) }}</dd></div>
@@ -56,6 +59,7 @@ function numero(valor) { return valor ?? 'No disponible' }
           <div><dt>Con MAC incompleta</dt><dd>{{ numero(datos.vecinos.resolucion_mac?.incompleta) }}</dd></div>
         </dl>
         <p>Se cuentan filas, incluidas las incompletas. La tabla de asociaciones deduplica IPv4–MAC resueltas: ambos recuentos pueden diferir. «No disponible» nunca significa cero.</p>
+        <p>La búsqueda activa puede crear filas ARP incompletas al intentar resolver direcciones sin respuesta. Estas filas no demuestran que existan equipos en esas direcciones.</p>
       </section>
       <MemoriaArp :presencia="datos.presencia" />
       </details>
