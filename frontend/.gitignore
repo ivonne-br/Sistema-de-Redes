@@ -1,0 +1,3 @@
+# Dependencias y resultados locales; package-lock.json conserva versiones reproducibles.
+node_modules/
+dist/

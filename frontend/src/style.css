@@ -1,0 +1,30 @@
+/* Presentación de App y sus tablas: adapta el espacio, distingue detalles de diagnóstico y muestra el foco de teclado. */
+:root { font-family: system-ui, sans-serif; color: #172c37; background: #f1f5f6; line-height: 1.6; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 1120px; margin: auto; padding: 32px 24px; }
+header { padding: 10px 0 24px; max-width: 850px; }
+h1 { font-size: clamp(1.8rem, 4vw, 2.6rem); line-height: 1.2; margin: 8px 0 20px; }
+h2 { font-size: 1.3rem; margin-top: 0; }
+.ceja { font-size: .85rem; font-weight: 700; color: #365c65; }
+section { background: white; border: 1px solid #cbd9de; border-radius: 10px; padding: 24px; margin: 22px 0; }
+.aviso { border-left: 4px solid #775013; background: #fff4dd; padding: 12px 18px; }
+.aviso p { margin: 6px 0; }
+.indicadores { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 20px; }
+dt { font-size: .9rem; color: #465d68; }
+dd { font-size: 1.12rem; font-weight: 650; margin: 6px 0; }
+.contexto { overflow-wrap: anywhere; }
+.secundario, footer { font-size: .9rem; color: #465d68; }
+.tabla { overflow-x: auto; }
+summary { cursor: pointer; font-weight: 650; padding: 12px 0; }
+.diagnostico { margin: 22px 0; border-top: 1px solid #cbd9de; }
+table { border-collapse: collapse; width: 100%; text-align: left; font-size: .9rem; }
+caption { text-align: left; padding: 10px 0; color: #465d68; }
+th, td { padding: 12px; border-bottom: 1px solid #d5dfe3; }
+th { background: #edf3f5; }
+.mono { font-family: ui-monospace, monospace; white-space: nowrap; }
+.eventos { padding-left: 24px; }
+.eventos li { padding: 12px 0; border-bottom: 1px solid #d5dfe3; }
+.eventos span { display: block; overflow-wrap: anywhere; white-space: normal; }
+:focus-visible { outline: 3px solid #006c85; outline-offset: 4px; }
+@media (max-width: 600px) { main { padding: 18px 12px; } section { padding: 18px 14px; } }
