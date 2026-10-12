@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 import json
 import math
+from ipaddress import IPv4Address
 from pathlib import Path
 
 @dataclass(frozen=True)
@@ -59,8 +60,30 @@ class ConfiguracionBackend:
     puerto_api: int = 8000
     busqueda_activa: bool = True
     intervalo_busqueda_s: float = 60.0
+    conectividad_activa: bool = True
+    intervalo_conectividad_s: float = 30.0
+    muestras_conectividad: int = 5
+    destinos_externos: tuple = ("1.1.1.1",)
 
     def __post_init__(self):
+        if type(self.conectividad_activa) is not bool:
+            raise TypeError("conectividad_activa debe ser un booleano.")
+        if type(self.intervalo_conectividad_s) not in (int, float):
+            raise TypeError("intervalo_conectividad_s debe ser un número.")
+        if not 1 <= self.intervalo_conectividad_s <= 86400 or not math.isfinite(self.intervalo_conectividad_s):
+            raise ValueError("intervalo_conectividad_s debe estar entre 1 y 86400 segundos.")
+        if type(self.muestras_conectividad) is not int or not 1 <= self.muestras_conectividad <= 20:
+            raise ValueError("muestras_conectividad debe ser un entero entre 1 y 20.")
+        if not isinstance(self.destinos_externos, tuple) or len(self.destinos_externos) > 3:
+            raise ValueError("destinos_externos debe ser una tupla de hasta tres IPv4 públicas.")
+        for destino in self.destinos_externos:
+            if not isinstance(destino, str):
+                raise ValueError("Cada destino externo debe ser una IPv4 pública escrita como texto.")
+            direccion = IPv4Address(destino)
+            if not direccion.is_global or direccion.is_multicast:
+                raise ValueError("Los destinos externos deben ser IPv4 públicas unicast.")
+        if len(set(self.destinos_externos)) != len(self.destinos_externos):
+            raise ValueError("No se permiten destinos externos repetidos.")
         if type(self.busqueda_activa) is not bool:
             raise TypeError("busqueda_activa debe ser un booleano.")
         if type(self.intervalo_busqueda_s) not in (int, float):
@@ -118,7 +141,7 @@ def interpretar_configuracion(texto):
         raise ValueError(f"JSON de configuración inválido en línea {error.lineno}, columna {error.colno}.") from None
     if not isinstance(datos, dict):
         raise ValueError("La configuración debe ser un objeto JSON.")
-    desconocidos = datos.keys() - {"sonda", "limite_contexto_s", "nivel_log", "memoria", "intervalo_arp_s", "vigencia_arp_s", "ausencias_arp", "puerto_api", "busqueda_activa", "intervalo_busqueda_s"}
+    desconocidos = datos.keys() - {"sonda", "limite_contexto_s", "nivel_log", "memoria", "intervalo_arp_s", "vigencia_arp_s", "ausencias_arp", "puerto_api", "busqueda_activa", "intervalo_busqueda_s", "conectividad_activa", "intervalo_conectividad_s", "muestras_conectividad", "destinos_externos"}
     if desconocidos:
         raise ValueError(f"Opciones desconocidas: {', '.join(sorted(desconocidos))}.")
     sonda = datos.get("sonda", {})
@@ -133,7 +156,14 @@ def interpretar_configuracion(texto):
     desconocidos = memoria.keys() - {"capacidad", "retencion_s"}
     if desconocidos:
         raise ValueError(f"Opciones de memoria desconocidas: {', '.join(sorted(desconocidos))}.")
+    externos = datos.get("destinos_externos", ["1.1.1.1"])
+    if not isinstance(externos, list):
+        raise ValueError("destinos_externos debe ser una lista JSON.")
     return ConfiguracionBackend(
+        conectividad_activa=datos.get("conectividad_activa", True),
+        intervalo_conectividad_s=datos.get("intervalo_conectividad_s", 30.0),
+        muestras_conectividad=datos.get("muestras_conectividad", 5),
+        destinos_externos=tuple(externos),
         busqueda_activa=datos.get("busqueda_activa", True),
         intervalo_busqueda_s=datos.get("intervalo_busqueda_s", 60.0),
         puerto_api=datos.get("puerto_api", 8000),

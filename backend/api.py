@@ -1,4 +1,4 @@
-"""Recibe configuración y sirve JSON en loopback; administra ARP y búsqueda activa, sin medir al consultar."""
+"""Recibe configuración y sirve JSON en loopback; administra ARP, búsqueda y conectividad independiente, sin medir al consultar."""
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -12,6 +12,7 @@ from backend.configuracion import ConfiguracionBackend
 from backend.coordinador import CoordinadorARP
 from backend.eventos import registrar_resultado
 from backend.busqueda import BusquedaLocal
+from backend.conectividad import MonitoreoConectividad
 
 _MONITOREO_PROCESO = Lock()
 
@@ -110,7 +111,7 @@ class _Peticion(BaseHTTPRequestHandler):
             identificador = parametros.get('id_contexto', [None])[0]
             if identificador is not None:
                 identificador = str(UUID(identificador))
-            if url.path == '/api/v1/estado' and parametros:
+            if url.path in ('/api/v1/estado', '/api/v1/conectividad') and parametros:
                 raise ValueError
         except ValueError:
             self._error(400, 'parametros_invalidos', 'Solo se admite id_contexto con un UUID válido en rutas ARP.')
@@ -118,6 +119,16 @@ class _Peticion(BaseHTTPRequestHandler):
         app = self.server.aplicacion
         if url.path == '/api/v1/estado':
             self._json(200, {'version_esquema': 1, 'monitoreo': app.estado()})
+            return
+        if url.path == '/api/v1/conectividad':
+            try:
+                datos = app.estado_conectividad()
+            except Exception:
+                app.logger.error('No se pudo construir la consulta de conectividad.')
+                self._error(500, 'error_consulta', 'No se pudo construir la consulta.')
+                return
+            self._json(200, {'version_esquema': 1, 'monitoreo': app.estado(),
+                             'datos': datos})
             return
         rutas = {'/api/v1/arp/resumen': app.consulta.resumen,
                  '/api/v1/arp/calidad': app.consulta.calidad}
@@ -142,13 +153,13 @@ class _Peticion(BaseHTTPRequestHandler):
 class APILocal:
     """Posee un servidor, un coordinador y una memoria durante una ejecución.
 
-    servir() ocupa el hilo llamante; ARP y búsqueda usan hilos separados.
+    servir() ocupa el hilo llamante; ARP, búsqueda y conectividad usan hilos separados.
     detener() solicita cierre y el ciclo activo termina antes de liberar el dueño
     del monitoreo. sysctl conserva su limitación de no tener timeout duro.
     """
 
     def __init__(self, configuracion=None, *, crear_coordinador=CoordinadorARP,
-                 crear_busqueda=BusquedaLocal, logger=None):
+                 crear_busqueda=BusquedaLocal, crear_conectividad=MonitoreoConectividad, logger=None):
         self.configuracion = configuracion if configuracion is not None else ConfiguracionBackend()
         if not isinstance(self.configuracion, ConfiguracionBackend):
             raise TypeError('configuracion debe ser una ConfiguracionBackend.')
@@ -156,6 +167,8 @@ class APILocal:
         self._crear_coordinador = crear_coordinador
         self._crear_busqueda = crear_busqueda
         self._busqueda = None
+        self._crear_conectividad = crear_conectividad
+        self._conectividad = None
         self._parada = Event()
         self.preparada = Event()
         self._lock = Lock()
@@ -179,6 +192,14 @@ class APILocal:
             self._coordinador.detener()
         if self._busqueda is not None:
             self._busqueda.detener()
+        if self._conectividad is not None:
+            self._conectividad.detener()
+
+    def estado_conectividad(self):
+        """Entrega el estado independiente: un fallo ARP no impide esta consulta."""
+        if self._conectividad is None:
+            return {'estado': 'desactivada', 'id_contexto': None, 'contexto': None, 'destinos': []}
+        return self._conectividad.estado()
 
     def estado_busqueda(self, id_contexto):
         """Consulta la última comprobación activa, con fechas propias y contexto explícito."""
@@ -207,6 +228,7 @@ class APILocal:
         servidor = None
         hilo = None
         hilo_busqueda = None
+        hilo_conectividad = None
         try:
             if self._usada:
                 raise RuntimeError('Esta instancia de API ya se inició.')
@@ -228,6 +250,10 @@ class APILocal:
                     intervalo_s=self.configuracion.intervalo_busqueda_s)
                 hilo_busqueda = Thread(target=self._busqueda.ejecutar, name='busqueda-local')
                 hilo_busqueda.start()
+            if self.configuracion.conectividad_activa:
+                self._conectividad = self._crear_conectividad(self.configuracion)
+                hilo_conectividad = Thread(target=self._conectividad.ejecutar, name='monitoreo-conectividad')
+                hilo_conectividad.start()
             self.preparada.set()
             if al_iniciar is not None:
                 al_iniciar(self)
@@ -239,6 +265,8 @@ class APILocal:
                 hilo.join()
             if hilo_busqueda is not None and hilo_busqueda.ident is not None:
                 hilo_busqueda.join()
+            if hilo_conectividad is not None and hilo_conectividad.ident is not None:
+                hilo_conectividad.join()
             if servidor is not None:
                 servidor.server_close()
             with self._lock:

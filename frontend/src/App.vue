@@ -1,9 +1,10 @@
-<!-- Presenta respuestas locales y diagnóstico ARP; recibe el resumen HTTP de la API. diagnostico=1 muestra ARP técnico, no es autorización. -->
+<!-- Organiza conectividad y respuestas locales; recibe resúmenes HTTP independientes. diagnostico=1 muestra ARP técnico, no es autorización. -->
 <script setup>
 import { computed } from 'vue'
 import { useResumen } from './useResumen.js'
 import MemoriaArp from './components/MemoriaArp.vue'
 import BusquedaLocal from './components/BusquedaLocal.vue'
+import Conectividad from './components/Conectividad.vue'
 
 const { respuesta, error, cargando, recuperada, recibida } = useResumen()
 const datos = computed(() => respuesta.value?.datos)
@@ -19,6 +20,7 @@ function numero(valor) { return valor ?? 'No disponible' }
     <header><p class="ceja">Consulta como invitado · instalación local</p><h1>Observación de red local</h1>
       <p>Respuestas recientes en la red local de esta computadora. La búsqueda no garantiza un inventario completo ni identifica qué equipos usan exactamente el mismo Wi‑Fi.</p>
     </header>
+    <Conectividad />
     <div role="status" aria-live="polite" class="aviso">
       <p v-if="cargando">Cargando la primera consulta…</p>
       <template v-else-if="error"><strong>API inaccesible o respuesta no utilizable</strong><p>{{ error }} Se reintentará automáticamente.</p>
