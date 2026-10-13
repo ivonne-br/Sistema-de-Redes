@@ -1,4 +1,4 @@
-"""API HTTP de desarrollo, de solo lectura y ligada exclusivamente a loopback."""
+"""Recibe configuración y sirve JSON en loopback; administra ARP y búsqueda activa, sin medir al consultar."""
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -11,6 +11,7 @@ from uuid import UUID
 from backend.configuracion import ConfiguracionBackend
 from backend.coordinador import CoordinadorARP
 from backend.eventos import registrar_resultado
+from backend.busqueda import BusquedaLocal
 
 _MONITOREO_PROCESO = Lock()
 
@@ -133,23 +134,28 @@ class _Peticion(BaseHTTPRequestHandler):
         if identificador is not None and calidad['id_ultimo_intento'] is None:
             self._error(404, 'contexto_no_disponible', 'El contexto no está conservado en esta ejecución.')
             return
+        if url.path == '/api/v1/arp/resumen':
+            datos['busqueda_activa'] = app.estado_busqueda(calidad['id_contexto'])
         self._json(200, {'version_esquema': 1, 'monitoreo': app.estado(), 'datos': datos})
 
 
 class APILocal:
     """Posee un servidor, un coordinador y una memoria durante una ejecución.
 
-    servir() ocupa el hilo llamante; el único recolector utiliza otro hilo.
+    servir() ocupa el hilo llamante; ARP y búsqueda usan hilos separados.
     detener() solicita cierre y el ciclo activo termina antes de liberar el dueño
     del monitoreo. sysctl conserva su limitación de no tener timeout duro.
     """
 
-    def __init__(self, configuracion=None, *, crear_coordinador=CoordinadorARP, logger=None):
+    def __init__(self, configuracion=None, *, crear_coordinador=CoordinadorARP,
+                 crear_busqueda=BusquedaLocal, logger=None):
         self.configuracion = configuracion if configuracion is not None else ConfiguracionBackend()
         if not isinstance(self.configuracion, ConfiguracionBackend):
             raise TypeError('configuracion debe ser una ConfiguracionBackend.')
         self.logger = logger if logger is not None else logging.getLogger('backend.api')
         self._crear_coordinador = crear_coordinador
+        self._crear_busqueda = crear_busqueda
+        self._busqueda = None
         self._parada = Event()
         self.preparada = Event()
         self._lock = Lock()
@@ -171,6 +177,15 @@ class APILocal:
         self._parada.set()
         if self._coordinador is not None:
             self._coordinador.detener()
+        if self._busqueda is not None:
+            self._busqueda.detener()
+
+    def estado_busqueda(self, id_contexto):
+        """Consulta la última comprobación activa, con fechas propias y contexto explícito."""
+        if self._busqueda is None:
+            return {'estado': 'desactivada', 'id_contexto': id_contexto,
+                    'detalle': None, 'resultados': []}
+        return self._busqueda.estado(id_contexto=id_contexto)
 
     def _monitorear(self):
         try:
@@ -191,6 +206,7 @@ class APILocal:
             raise RuntimeError('Ya existe una API con monitoreo en este proceso.')
         servidor = None
         hilo = None
+        hilo_busqueda = None
         try:
             if self._usada:
                 raise RuntimeError('Esta instancia de API ya se inició.')
@@ -206,6 +222,12 @@ class APILocal:
                 self._estado = 'activo'
             hilo = Thread(target=self._monitorear, name='monitoreo-arp')
             hilo.start()
+            if self.configuracion.busqueda_activa:
+                self._busqueda = self._crear_busqueda(
+                    self._coordinador.memoria.ultima,
+                    intervalo_s=self.configuracion.intervalo_busqueda_s)
+                hilo_busqueda = Thread(target=self._busqueda.ejecutar, name='busqueda-local')
+                hilo_busqueda.start()
             self.preparada.set()
             if al_iniciar is not None:
                 al_iniciar(self)
@@ -215,6 +237,8 @@ class APILocal:
             self.detener()
             if hilo is not None and hilo.ident is not None:
                 hilo.join()
+            if hilo_busqueda is not None and hilo_busqueda.ident is not None:
+                hilo_busqueda.join()
             if servidor is not None:
                 servidor.server_close()
             with self._lock:

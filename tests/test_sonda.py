@@ -49,6 +49,7 @@ class PruebasSonda(unittest.TestCase):
         comando = argumentos[0]
         self.assertEqual(comando[comando.index("-c") + 1], "1")
         self.assertEqual(comando[comando.index("-W") + 1], "1000")
+        self.assertEqual(comando[comando.index("-t") + 1], "1")
         self.assertEqual(opciones["timeout"], 5)
         self.assertFalse(opciones.get("shell", False))
 
@@ -130,6 +131,7 @@ class PruebasSonda(unittest.TestCase):
         comando = argumentos[0]
 
         self.assertEqual(comando[comando.index("-W") + 1], "2000")
+        self.assertEqual(comando[comando.index("-t") + 1], "2")
         self.assertEqual(opciones["timeout"], 6)
 
     def test_respeta_el_plazo_personalizado(self):

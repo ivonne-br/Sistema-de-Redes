@@ -1,3 +1,5 @@
+"""Entrada CLI: valida argumentos/configuración y conecta comandos, API y señales de cierre; entrega JSON a la terminal."""
+
 import argparse # módulo para analizar argumentos de línea de comandos
 import ipaddress
 import json
@@ -89,6 +91,8 @@ def main():
     subcomandos = parser.add_subparsers(dest="comando")
     api = subcomandos.add_parser("servir-api", help="Iniciar API de lectura en 127.0.0.1 y un único monitoreo ARP; Ctrl+C para cerrar.")
     api.add_argument("--puerto", type=int, help="Puerto local (8000 por defecto; 0 elige uno libre).")
+    api.add_argument("--sin-busqueda-activa", action="store_true",
+                     help="Desactivar las sondas periódicas a la subred privada; conservar la lectura ARP.")
     monitoreo = subcomandos.add_parser("monitorear-arp", help="Consultar contexto y ARP periódicamente; emitir JSON Lines.")
     monitoreo.add_argument("--intervalo", type=float, help="Segundos de espera entre ciclos (predeterminado: configuración o 5).")
     monitoreo.add_argument("--ciclos", type=int, help="Número positivo de ciclos; omitir para continuar hasta Ctrl+C.")
@@ -145,6 +149,8 @@ def main():
         configuracion = cargar_configuracion(argumentos.config)
         if argumentos.comando == "servir-api" and argumentos.puerto is not None:
             configuracion = replace(configuracion, puerto_api=argumentos.puerto)
+        if argumentos.comando == "servir-api" and argumentos.sin_busqueda_activa:
+            configuracion = replace(configuracion, busqueda_activa=False)
         if argumentos.comando == "monitorear-arp":
             if argumentos.intervalo is not None:
                 configuracion = replace(configuracion, intervalo_arp_s=argumentos.intervalo)

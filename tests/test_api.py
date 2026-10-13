@@ -26,8 +26,8 @@ class PruebasAPI(unittest.TestCase):
         self.logger.propagate = False
 
     @contextmanager
-    def servicio(self, *, arp=None, esperar_muestra=True):
-        config = ConfiguracionBackend(puerto_api=0, intervalo_arp_s=60)
+    def servicio(self, *, arp=None, esperar_muestra=True, busqueda=None):
+        config = ConfiguracionBackend(puerto_api=0, intervalo_arp_s=60, busqueda_activa=busqueda is not None)
         fuente = arp if arp is not None else Mock(return_value=lectura())
         fuente_contexto = Mock(return_value=contexto())
         c = CoordinadorARP(config, consultar_arp=fuente, consultar_contexto=fuente_contexto)
@@ -37,7 +37,8 @@ class PruebasAPI(unittest.TestCase):
             guardar_original(*args, **kwargs)
             guardada.set()
         c.memoria.guardar = Mock(side_effect=guardar)
-        app = APILocal(config, crear_coordinador=Mock(return_value=c), logger=self.logger)
+        app = APILocal(config, crear_coordinador=Mock(return_value=c), logger=self.logger,
+                       crear_busqueda=Mock(return_value=busqueda))
         errores = []
         def ejecutar():
             try:
@@ -69,6 +70,20 @@ class PruebasAPI(unittest.TestCase):
             return respuesta.status, dict(respuesta.getheaders()), json.loads(cuerpo) if cuerpo else None
         finally:
             conexion.close()
+
+    def test_busqueda_inicia_una_vez_consultas_no_reinician_y_cierra(self):
+        parada = Event()
+        busqueda = Mock()
+        busqueda.ejecutar.side_effect = lambda: parada.wait(4)
+        busqueda.detener.side_effect = parada.set
+        busqueda.estado.side_effect = lambda **kw: {"estado": "en_espera", "id_contexto": kw["id_contexto"], "resultados": []}
+        with self.servicio(busqueda=busqueda) as (app, c, _, _):
+            for _ in range(3):
+                codigo, _, respuesta = self.pedir(app)
+                self.assertEqual(codigo, 200)
+                self.assertEqual(respuesta['datos']['busqueda_activa']['id_contexto'], c.memoria.ultima()['id_contexto'])
+            busqueda.ejecutar.assert_called_once()
+        busqueda.detener.assert_called()
 
     def test_get_estado_resumen_calidad_y_peticiones_no_crean_recolectores(self):
         with self.servicio() as (app, c, arp, fuente_contexto):
@@ -174,7 +189,7 @@ class PruebasAPI(unittest.TestCase):
 
     def test_cli_senales_restauradas_y_json_inicio(self):
         for senal in (signal.SIGINT, signal.SIGTERM):
-            app = APILocal(ConfiguracionBackend(puerto_api=0), logger=self.logger,
+            app = APILocal(ConfiguracionBackend(puerto_api=0, busqueda_activa=False), logger=self.logger,
                            crear_coordinador=lambda conf: CoordinadorARP(conf,
                                consultar_contexto=Mock(return_value=contexto()),
                                consultar_arp=Mock(return_value=lectura())))

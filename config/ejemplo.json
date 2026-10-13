@@ -5,6 +5,8 @@
   },
   "limite_contexto_s": 5,
   "intervalo_arp_s": 5,
+  "busqueda_activa": true,
+  "intervalo_busqueda_s": 60,
   "vigencia_arp_s": 90,
   "ausencias_arp": 3,
   "puerto_api": 8000,

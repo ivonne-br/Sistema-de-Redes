@@ -1,11 +1,11 @@
-# Función para ejecutar una sonda ICMP: recibe una dirección IPv4 y devuelve un diccionario con el resultado de la sonda.
-# macOS es el único sistema operativo soportado en esta primera versión.
+"""Sonda ICMP macOS: recibe IPv4 y tiempos; entrega respuesta, silencio o fallo al CLI y la búsqueda local."""
 
 import ipaddress 
 import os
 import platform
 import re
 import subprocess
+from math import ceil
 from datetime import datetime, timezone
 from backend.configuracion import ConfiguracionSonda
 
@@ -35,6 +35,7 @@ def ejecutar_sonda(destino, configuracion=None):
         "-n",
         "-c", "1", # Envía un solo paquete ICMP
         "-W", str(configuracion.espera_ms),
+        "-t", str(ceil(configuracion.espera_ms / 1000)),
         direccion,
     ]
 

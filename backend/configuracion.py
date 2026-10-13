@@ -1,5 +1,4 @@
-# Representar y validar los tiempos de sonda => objeto de configuración
-"""Parámetros y validación de la sonda individual."""
+"""Recibe JSON y valida sondas, memoria y tareas de red; entrega configuración al CLI, API y monitores independientes."""
 
 from dataclasses import dataclass, field
 import json
@@ -58,8 +57,16 @@ class ConfiguracionBackend:
     vigencia_arp_s: int = 90
     ausencias_arp: int = 3
     puerto_api: int = 8000
+    busqueda_activa: bool = True
+    intervalo_busqueda_s: float = 60.0
 
     def __post_init__(self):
+        if type(self.busqueda_activa) is not bool:
+            raise TypeError("busqueda_activa debe ser un booleano.")
+        if type(self.intervalo_busqueda_s) not in (int, float):
+            raise TypeError("intervalo_busqueda_s debe ser un número.")
+        if not 0 < self.intervalo_busqueda_s <= 86400 or not math.isfinite(self.intervalo_busqueda_s):
+            raise ValueError("intervalo_busqueda_s debe ser finito, positivo y como máximo 86400.")
         if type(self.puerto_api) is not int:
             raise TypeError("puerto_api debe ser un entero, sin booleanos.")
         if not 0 <= self.puerto_api <= 65535:
@@ -111,7 +118,7 @@ def interpretar_configuracion(texto):
         raise ValueError(f"JSON de configuración inválido en línea {error.lineno}, columna {error.colno}.") from None
     if not isinstance(datos, dict):
         raise ValueError("La configuración debe ser un objeto JSON.")
-    desconocidos = datos.keys() - {"sonda", "limite_contexto_s", "nivel_log", "memoria", "intervalo_arp_s", "vigencia_arp_s", "ausencias_arp", "puerto_api"}
+    desconocidos = datos.keys() - {"sonda", "limite_contexto_s", "nivel_log", "memoria", "intervalo_arp_s", "vigencia_arp_s", "ausencias_arp", "puerto_api", "busqueda_activa", "intervalo_busqueda_s"}
     if desconocidos:
         raise ValueError(f"Opciones desconocidas: {', '.join(sorted(desconocidos))}.")
     sonda = datos.get("sonda", {})
@@ -127,6 +134,8 @@ def interpretar_configuracion(texto):
     if desconocidos:
         raise ValueError(f"Opciones de memoria desconocidas: {', '.join(sorted(desconocidos))}.")
     return ConfiguracionBackend(
+        busqueda_activa=datos.get("busqueda_activa", True),
+        intervalo_busqueda_s=datos.get("intervalo_busqueda_s", 60.0),
         puerto_api=datos.get("puerto_api", 8000),
         intervalo_arp_s=datos.get("intervalo_arp_s", 5.0),
         vigencia_arp_s=datos.get("vigencia_arp_s", 90),
