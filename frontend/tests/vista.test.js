@@ -1,4 +1,4 @@
-// Datos artificiales entran por fetch; verifica la pantalla, la ventana retenida y el ciclo HTTP sin red real.
+// Datos artificiales entran por fetch; verifica la pantalla ARP aislada de ICMP/DNS/HTTPS, la ventana retenida y el ciclo HTTP sin red real.
 import { beforeEach, afterEach, expect, test, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import App from '../src/App.vue'
@@ -19,7 +19,7 @@ afterEach(() => { vista?.unmount(); vi.useRealTimers(); vi.unstubAllGlobals(); w
 test('la vista habitual no incluye tablas ARP ni eventos de diagnóstico', async () => {
   window.history.replaceState({}, '', '/')
   vi.stubGlobal('fetch', vi.fn(async () => ok(base())))
-  vista = mount(App, { global: { stubs: { Conectividad: true } } })
+  vista = mount(App, { global: { stubs: { Conectividad: true, ServiciosWeb: true } } })
   await flushPromises()
   expect(vista.find('details.diagnostico').exists()).toBe(false)
   expect(vista.find('.eventos').exists()).toBe(false)
@@ -30,7 +30,7 @@ test('carga, cuenta filas y reemplaza eventos; retención y A → B → A no mez
   vi.useFakeTimers()
   let dato = base()
   vi.stubGlobal('fetch', vi.fn(async () => ok(dato)))
-  vista = mount(App, { global: { stubs: { Conectividad: true } } })
+  vista = mount(App, { global: { stubs: { Conectividad: true, ServiciosWeb: true } } })
   expect(vista.text()).toContain('Cargando')
   await flushPromises()
   expect(vista.get('details.diagnostico').attributes('open')).toBeUndefined()
@@ -54,7 +54,7 @@ test('distingue parcial, fallo con dato anterior, antiguo, API caída y recupera
   dato.datos.calidad.calidad_fuente = 'parcial'
   const fetchMock = vi.fn(async () => ok(dato))
   vi.stubGlobal('fetch', fetchMock)
-  vista = mount(App, { global: { stubs: { Conectividad: true } } })
+  vista = mount(App, { global: { stubs: { Conectividad: true, ServiciosWeb: true } } })
   await flushPromises()
   expect(vista.text()).toContain('Lectura parcial')
   dato = base()
@@ -78,7 +78,7 @@ test('sin observaciones conserva null como no disponible', async () => {
   dato.datos.presencia.asociaciones = []
   dato.datos.presencia.eventos_en_memoria = []
   vi.stubGlobal('fetch', vi.fn(async () => ok(dato)))
-  vista = mount(App, { global: { stubs: { Conectividad: true } } })
+  vista = mount(App, { global: { stubs: { Conectividad: true, ServiciosWeb: true } } })
   await flushPromises()
   expect(vista.text()).toContain('Sin observaciones')
   expect(vista.findAll('dd').slice(-3).map(n => n.text())).toEqual(Array(3).fill('No disponible'))
@@ -93,7 +93,7 @@ test('no superpone peticiones y cancela al desmontar sin programar otra', async 
     return new Promise(resolve => { terminar = resolve })
   })
   vi.stubGlobal('fetch', fetchMock)
-  vista = mount(App, { global: { stubs: { Conectividad: true } } })
+  vista = mount(App, { global: { stubs: { Conectividad: true, ServiciosWeb: true } } })
   await vi.advanceTimersByTimeAsync(6000)
   expect(fetchMock).toHaveBeenCalledTimes(1)
   vista.unmount()
@@ -110,7 +110,7 @@ test('el timeout permite reintentar y recuperar la vista', async () => {
     signal.addEventListener('abort', () => reject(new DOMException('Cancelada', 'AbortError')))
   })).mockResolvedValue(ok(base()))
   vi.stubGlobal('fetch', fetchMock)
-  vista = mount(App, { global: { stubs: { Conectividad: true } } })
+  vista = mount(App, { global: { stubs: { Conectividad: true, ServiciosWeb: true } } })
   await vi.advanceTimersByTimeAsync(8000)
   expect(vista.text()).toContain('superó 8 segundos')
   await vi.advanceTimersByTimeAsync(5000)

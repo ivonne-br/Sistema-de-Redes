@@ -1,8 +1,10 @@
-"""Recibe JSON y valida sondas, memoria y tareas de red; entrega configuración al CLI, API y monitores independientes."""
+"""Recibe JSON y valida sondas ICMP/DNS/HTTPS, memoria y tareas de red; entrega configuración al CLI, API y monitores independientes."""
 
 from dataclasses import dataclass, field
 import json
 import math
+import re
+from urllib.parse import urlsplit
 from ipaddress import IPv4Address
 from pathlib import Path
 
@@ -65,7 +67,39 @@ class ConfiguracionBackend:
     muestras_conectividad: int = 5
     destinos_externos: tuple = ("1.1.1.1",)
 
+    web_activa: bool = True
+    intervalo_web_s: float = 60.0
+    limite_web_s: float = 8.0
+    nombre_dns: str = "www.gstatic.com"
+    url_https: str = "https://www.gstatic.com/generate_204"
+    codigo_https_esperado: int = 204
+
     def __post_init__(self):
+        if type(self.web_activa) is not bool:
+            raise TypeError("web_activa debe ser un booleano.")
+        for nombre, minimo, maximo in (("intervalo_web_s", 10, 86400), ("limite_web_s", 1, 30)):
+            valor = getattr(self, nombre)
+            if type(valor) not in (int, float) or not math.isfinite(valor) or not minimo <= valor <= maximo:
+                raise ValueError(f"{nombre} debe estar entre {minimo} y {maximo} segundos.")
+        if not isinstance(self.nombre_dns, str) or len(self.nombre_dns) > 253 or not all(
+            re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", parte)
+            for parte in self.nombre_dns.rstrip('.').split('.')
+        ):
+            raise ValueError("nombre_dns debe ser un nombre de host ASCII válido.")
+        try:
+            IPv4Address(self.nombre_dns)
+        except ValueError:
+            pass
+        else:
+            raise ValueError("nombre_dns debe ser un nombre, no una IPv4 literal.")
+        if not isinstance(self.url_https, str) or any(ord(c) <= 32 or ord(c) >= 127 for c in self.url_https):
+            raise ValueError("url_https debe ser una URL ASCII sin espacios ni controles.")
+        url = urlsplit(self.url_https)
+        if (url.scheme != 'https' or not url.hostname or url.username is not None
+                or url.password is not None or url.fragment or url.port == 0):
+            raise ValueError("url_https requiere HTTPS, host y puerto válido, sin credenciales ni fragmento.")
+        if type(self.codigo_https_esperado) is not int or not 200 <= self.codigo_https_esperado <= 299:
+            raise ValueError("codigo_https_esperado debe ser un código entre 200 y 299.")
         if type(self.conectividad_activa) is not bool:
             raise TypeError("conectividad_activa debe ser un booleano.")
         if type(self.intervalo_conectividad_s) not in (int, float):
@@ -141,7 +175,7 @@ def interpretar_configuracion(texto):
         raise ValueError(f"JSON de configuración inválido en línea {error.lineno}, columna {error.colno}.") from None
     if not isinstance(datos, dict):
         raise ValueError("La configuración debe ser un objeto JSON.")
-    desconocidos = datos.keys() - {"sonda", "limite_contexto_s", "nivel_log", "memoria", "intervalo_arp_s", "vigencia_arp_s", "ausencias_arp", "puerto_api", "busqueda_activa", "intervalo_busqueda_s", "conectividad_activa", "intervalo_conectividad_s", "muestras_conectividad", "destinos_externos"}
+    desconocidos = datos.keys() - {"sonda", "limite_contexto_s", "nivel_log", "memoria", "intervalo_arp_s", "vigencia_arp_s", "ausencias_arp", "puerto_api", "busqueda_activa", "intervalo_busqueda_s", "conectividad_activa", "intervalo_conectividad_s", "muestras_conectividad", "destinos_externos", "web_activa", "intervalo_web_s", "limite_web_s", "nombre_dns", "url_https", "codigo_https_esperado"}
     if desconocidos:
         raise ValueError(f"Opciones desconocidas: {', '.join(sorted(desconocidos))}.")
     sonda = datos.get("sonda", {})
@@ -160,6 +194,12 @@ def interpretar_configuracion(texto):
     if not isinstance(externos, list):
         raise ValueError("destinos_externos debe ser una lista JSON.")
     return ConfiguracionBackend(
+        web_activa=datos.get("web_activa", True),
+        intervalo_web_s=datos.get("intervalo_web_s", 60.0),
+        limite_web_s=datos.get("limite_web_s", 8.0),
+        nombre_dns=datos.get("nombre_dns", "www.gstatic.com"),
+        url_https=datos.get("url_https", "https://www.gstatic.com/generate_204"),
+        codigo_https_esperado=datos.get("codigo_https_esperado", 204),
         conectividad_activa=datos.get("conectividad_activa", True),
         intervalo_conectividad_s=datos.get("intervalo_conectividad_s", 30.0),
         muestras_conectividad=datos.get("muestras_conectividad", 5),

@@ -1,4 +1,4 @@
-// Transporte HTTP: recibe señales de cancelación y entrega resúmenes ARP o conectividad a las vistas, sin calcular métricas.
+// Transporte HTTP: recibe señales de cancelación y entrega resúmenes ARP, ICMP o DNS/HTTPS a las vistas, sin calcular métricas.
 export async function consultarResumen(signal) {
   const respuesta = await fetch('/api/v1/arp/resumen', { signal, cache: 'no-store' })
   if (!respuesta.ok) throw new Error(`La API respondió HTTP ${respuesta.status}.`)
@@ -19,6 +19,20 @@ export async function consultarConectividad(signal) {
       || !Array.isArray(cuerpo.datos?.destinos)
       || cuerpo.datos.destinos.some(d => !d || !d.rtt_ms || typeof d.calidad !== 'string')) {
     throw new Error('La API de conectividad devolvió un formato no compatible.')
+  }
+  return cuerpo
+}
+
+export async function consultarWeb(signal) {
+  const respuesta = await fetch('/api/v1/web', { signal, cache: 'no-store' })
+  if (!respuesta.ok) throw new Error(`La API DNS/HTTPS respondió HTTP ${respuesta.status}.`)
+  const cuerpo = await respuesta.json()
+  if (cuerpo.version_esquema !== 1 || typeof cuerpo.datos?.estado !== 'string'
+      || !Array.isArray(cuerpo.datos?.resultados)
+      || cuerpo.datos.resultados.some(r => !r || !['dns', 'https'].includes(r.tipo)
+        || typeof r.estado !== 'string' || typeof r.destino !== 'string'
+        || !Array.isArray(r.direcciones))) {
+    throw new Error('La API DNS/HTTPS devolvió un formato no compatible.')
   }
   return cuerpo
 }
