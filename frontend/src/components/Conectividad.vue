@@ -1,4 +1,4 @@
-<!-- Consulta series ICMP mediante api.js/useResumen; presenta métricas calculadas por Python y distingue fallos, datos anteriores y recuperación. -->
+<!-- Consulta series ICMP mediante api.js/useResumen; presenta últimas métricas e historial temporal calculados por Python y distingue fallos, datos anteriores y recuperación. -->
 <script setup>
 import { computed } from 'vue'
 import { consultarConectividad } from '../api.js'
@@ -6,6 +6,8 @@ import { useResumen } from '../useResumen.js'
 
 const { respuesta, error, cargando, recuperada } = useResumen(consultarConectividad)
 const datos = computed(() => respuesta.value?.datos)
+const historial = computed(() => [...(datos.value?.historial ?? [])].reverse().flatMap(serie =>
+  serie.destinos.map(fila => ({ ...fila, clave: `${serie.id_serie}-${fila.tipo}-${fila.ipv4}` }))))
 const estados = { esperando_contexto: 'Esperando contexto de red', sin_contexto: 'Contexto de red no disponible',
   midiendo: 'Medición en curso', en_espera: 'Esperando la siguiente serie', detenido: 'Medición detenida',
   desactivada: 'Medición desactivada', error: 'Fallo del monitor' }
@@ -44,6 +46,24 @@ function edad(valor) { return valor == null ? 'No disponible' : `${valor.toFixed
         <p v-if="destino.calidad !== 'completa'" class="aviso">Hay errores u omisiones: el porcentaje no está disponible. Los tiempos corresponden únicamente a las respuestas válidas obtenidas.</p>
         <p v-if="destino.anterior_completa" class="aviso">Última serie completa anterior: {{ fecha(destino.anterior_completa.fin) }}; antigüedad {{ edad(destino.anterior_completa.antiguedad_s) }}. Sin respuesta: {{ numero(destino.anterior_completa.perdida_observada_pct, ' %') }}; RTT promedio: {{ numero(destino.anterior_completa.rtt_ms.promedio, ' ms') }}. Es un dato anterior, no sustituye el resultado del último intento.</p>
       </article>
+      <details class="historial-icmp">
+        <summary>¿Se repiten las solicitudes sin respuesta? Ver evolución ICMP</summary>
+        <p>Series del contexto actual, de la más reciente a la más antigua. Se conservan hasta {{ datos.capacidad_series ?? '—' }} series y {{ datos.retencion_s ?? '—' }} segundos. Reiniciar Python borra esta memoria.</p>
+        <p v-if="error" class="aviso">Historial conservado sin actualizar mientras la API no responde.</p>
+        <p v-if="!historial.length">Todavía no hay series conservadas en esta ventana.</p>
+        <div v-else class="tabla" tabindex="0" role="region" aria-label="Evolución ICMP; tabla desplazable">
+          <table>
+            <caption>Una fila por destino y serie. Los errores y omisiones se muestran separados de las solicitudes sin respuesta.</caption>
+            <thead><tr><th scope="col">Fin</th><th scope="col">Destino</th><th scope="col">Serie</th><th scope="col">Respuestas / realizadas</th><th scope="col">Sin respuesta</th><th scope="col">Errores / omitidas</th><th scope="col">RTT promedio</th></tr></thead>
+            <tbody><tr v-for="fila in historial" :key="fila.clave">
+              <td>{{ fecha(fila.fin) }}</td><td>{{ fila.tipo === 'router' ? 'Router' : 'Externo' }} · {{ fila.ipv4 ?? 'No disponible' }}</td>
+              <td>{{ calidades[fila.calidad] ?? fila.calidad }}</td><td>{{ fila.respuestas }} / {{ fila.realizadas }}</td><td>{{ fila.sin_respuesta }}</td>
+              <td>{{ fila.errores }} / {{ fila.omitidas }}</td><td>{{ numero(fila.rtt_ms.promedio, ' ms') }}</td>
+            </tr></tbody>
+          </table>
+        </div>
+        <p>Una fila representa una serie medida, no todo el tiempo entre dos filas. Los periodos sin medición no se rellenan con ceros. Al cambiar de contexto comienza otra ventana visible, incluso al volver a la misma red.</p>
+      </details>
       <p v-if="datos.muestras_por_serie" class="secundario">{{ datos.muestras_por_serie }} sondas por destino y serie, con una pausa de 1 segundo entre rondas. La siguiente serie comienza {{ datos.intervalo_s }} segundos después de terminar. Vigencia: {{ datos.vigencia_s }} segundos. La vista consulta cada 5 segundos.</p>
     </template>
     <details><summary>Cómo interpretar estas mediciones</summary>

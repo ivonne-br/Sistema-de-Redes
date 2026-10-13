@@ -1,4 +1,4 @@
-"""Sondas y contexto simulados prueban DNS/HTTPS, plazos y memoria sin servicios públicos.
+"""Sondas y contexto simulados prueban DNS/HTTPS, plazos e historial acotado por contexto sin servicios públicos.
 
 También comprueba el trabajador real con localhost; la API se prueba en test_api.
 """
@@ -170,3 +170,55 @@ class PruebasWeb(unittest.TestCase):
             for valor in valores:
                 with self.subTest(campo=campo, valor=valor), self.assertRaises((ValueError, TypeError)):
                     ConfiguracionBackend(**{campo: valor})
+
+    def test_historial_estable_fallo_recuperacion_copias_y_fechas(self):
+        m = self.crear()
+        m.ciclo()
+        primera = m.estado()['historial'][0]
+        self.tiempo = 10
+        self.sonda.side_effect = OSError()
+        m.ciclo()
+        self.tiempo = 20
+        self.sonda.side_effect = lambda *args: correcto()
+        m.ciclo()
+        dato = m.estado()
+        self.assertEqual([s['resultados'][0]['estado'] for s in dato['historial']],
+                         ['correcto', 'error_medicion', 'correcto'])
+        self.assertEqual(dato['historial'][0]['id_serie'], primera['id_serie'])
+        self.assertEqual(dato['historial'][0]['resultados'][0]['fin'], primera['resultados'][0]['fin'])
+        self.assertEqual(dato['historial'][0]['resultados'][0]['antiguedad_s'], 20)
+        self.assertNotIn('_instante', repr(dato))
+        dato['historial'][0]['resultados'][0]['estado'] = 'alterado'
+        self.assertEqual(m.estado()['historial'][0]['resultados'][0]['estado'], 'correcto')
+        self.assertEqual(self.sonda.call_count, 6)
+
+    def test_historial_capacidad_retencion_contexto_y_reinicio(self):
+        from backend.configuracion import ConfiguracionMemoria
+        self.tiempo = 0
+        fuente = Mock(return_value=contexto())
+        config = ConfiguracionBackend(memoria=ConfiguracionMemoria(capacidad=2, retencion_s=60))
+        m = MonitoreoWeb(config, consultar_contexto=fuente, sonda=lambda *args: correcto(), reloj=lambda: self.tiempo)
+        for instante in (0, 10, 20):
+            self.tiempo = instante
+            m.ciclo()
+        anterior = m.estado()
+        self.assertEqual(len(anterior['historial']), 2)
+        self.assertEqual(anterior['historial'][0]['antiguedad_s'], 10)
+        self.tiempo = 70
+        self.assertEqual(len(m.estado()['historial']), 1)
+        fuente.return_value = contexto(OTRO)
+        m.ciclo()
+        self.assertEqual(len(m.estado()['historial']), 1)
+        fuente.return_value = contexto()
+        m.ciclo()
+        self.assertEqual(len(m.estado()['historial']), 1)
+        self.assertNotEqual(m.estado()['id_contexto'], anterior['id_contexto'])
+        fuente.return_value = {'estado': 'sin_ruta'}
+        m.ciclo()
+        self.assertEqual(m.estado()['historial'], [])
+        fuente.return_value = contexto()
+        m.ciclo()
+        self.assertEqual(len(m.estado()['historial']), 1)
+        self.tiempo = 130
+        self.assertEqual(m.estado()['historial'], [])
+        self.assertEqual(MonitoreoWeb(config).estado()['historial'], [])

@@ -1,4 +1,4 @@
-"""Contextos, reloj y sondas artificiales verifican métricas y ciclo de vida sin red real; se consulta el mismo contrato que sirve la API."""
+"""Contextos, reloj y sondas artificiales verifican métricas, historial acotado y ciclo de vida sin red real; se consulta el mismo contrato que sirve la API."""
 
 from threading import Event, Thread
 import unittest
@@ -188,3 +188,43 @@ class PruebasConectividad(unittest.TestCase):
                     ConfiguracionBackend(**{campo: valor})
         with self.assertRaises(ValueError):
             interpretar_configuracion('{"destinos_externos":"1.1.1.1"}')
+
+    def test_historial_estable_copias_y_fallo_no_borra_serie_anterior(self):
+        m = self.crear()
+        m.ciclo()
+        primera = m.estado()['historial'][0]
+        self.tiempo = 30
+        self.sonda.side_effect = OSError('fallo simulado')
+        m.ciclo()
+        dato = m.estado()
+        self.assertEqual(len(dato['historial']), 2)
+        self.assertEqual(dato['historial'][0]['id_serie'], primera['id_serie'])
+        self.assertEqual(dato['historial'][0]['destinos'][0]['respuestas'], 5)
+        self.assertEqual(dato['historial'][1]['destinos'][0]['errores'], 5)
+        self.assertEqual(dato['historial'][0]['antiguedad_s'], 30)
+        self.assertNotIn('fin_monotonico', repr(dato['historial']))
+        dato['historial'][0]['destinos'][0]['respuestas'] = 999
+        self.assertEqual(m.estado()['historial'][0]['destinos'][0]['respuestas'], 5)
+        self.assertEqual(self.sonda.call_count, 20)
+
+    def test_historial_capacidad_caducidad_y_contextos_no_se_mezclan(self):
+        m = self.crear(memoria=ConfiguracionMemoria(capacidad=2, retencion_s=60))
+        for instante in (0, 10, 20):
+            self.tiempo = instante
+            m.ciclo()
+        dato = m.estado()
+        self.assertEqual(len(dato['historial']), 2)
+        self.assertEqual(dato['historial'][0]['antiguedad_s'], 10)
+        self.tiempo = 70
+        self.assertEqual(len(m.estado()['historial']), 1)
+        self.fuente.return_value = contexto(OTRO)
+        m.ciclo()
+        otro = m.estado()
+        self.assertEqual(len(otro['historial']), 1)
+        self.assertNotEqual(otro['id_contexto'], dato['id_contexto'])
+        self.fuente.return_value = contexto()
+        m.ciclo()
+        self.assertEqual(len(m.estado()['historial']), 1)
+        self.assertNotEqual(m.estado()['id_contexto'], dato['id_contexto'])
+        self.tiempo = 130
+        self.assertEqual(m.estado()['historial'], [])

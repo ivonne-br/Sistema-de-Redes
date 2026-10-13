@@ -1,7 +1,7 @@
 """Mide series ICMP hacia gateway y IPv4 externas, sin consultar ni depender de ARP.
 
 Entradas: configuración, contexto IPv4 y sonda inyectables. Salida: copias de la
-última serie por destino, métricas y antigüedad para la API. Conserva hasta la
+última serie e historial por destino, métricas y antigüedad para la API. Conserva hasta la
 capacidad/retención configuradas; los tramos de red tienen UUID propios.
 """
 
@@ -156,7 +156,7 @@ class MonitoreoConectividad:
                           'omision': 'El contexto no informa un gateway IPv4.' if ip is None else None,
                           **resumir_serie(resultados, self.config.muestras_conectividad)})
         with self._lock:
-            self._historial.append({'id_contexto': identificador, 'fin_monotonico': instante, 'destinos': filas})
+            self._historial.append({'id_serie': str(uuid4()), 'id_contexto': identificador, 'fin_monotonico': instante, 'destinos': filas})
             self._meta['estado'] = 'detenido' if self._parada.is_set() else 'en_espera'
 
     def estado(self):
@@ -167,6 +167,11 @@ class MonitoreoConectividad:
                 self._historial.popleft()
             meta = deepcopy(self._meta)
             historial = deepcopy([r for r in self._historial if r['id_contexto'] == meta['id_contexto']])
+        # La vista recibe una ventana completa; los IDs se crean al medir, no al consultar.
+        ventana = []
+        for serie in deepcopy(historial):
+            serie['antiguedad_s'] = max(0, ahora - serie.pop('fin_monotonico'))
+            ventana.append(serie)
         filas = []
         if historial:
             ultimo = historial[-1]
@@ -181,7 +186,8 @@ class MonitoreoConectividad:
                             fila['anterior_completa'] = anterior
                             break
                 filas.append(fila)
-        return {**meta, 'destinos': filas, 'series_conservadas': len(historial),
+        return {**meta, 'destinos': filas, 'historial': ventana, 'series_conservadas': len(historial),
+                'capacidad_series': self.config.memoria.capacidad,
                 'intervalo_s': self.config.intervalo_conectividad_s, 'muestras_por_serie': self.config.muestras_conectividad,
                 'vigencia_s': 90, 'retencion_s': self.config.memoria.retencion_s,
                 'metodo': 'icmp_ping_macos'}

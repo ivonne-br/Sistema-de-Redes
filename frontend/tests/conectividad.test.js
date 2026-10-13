@@ -1,4 +1,4 @@
-// Simula HTTP y tiempo para verificar métricas independientes de ARP, recuperación, contexto y cancelación de la vista ICMP.
+// Simula HTTP y tiempo para verificar métricas independientes de ARP, recuperación, historial, contexto y cancelación de la vista ICMP.
 import { afterEach, expect, test, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import Conectividad from '../src/components/Conectividad.vue'
@@ -92,4 +92,33 @@ test('endpoint ausente o esquema inválido da un error explícito', async () => 
   vi.stubGlobal('fetch', pedir)
   await expect(consultarConectividad()).rejects.toThrow('HTTP 404')
   await expect(consultarConectividad()).rejects.toThrow('formato no compatible')
+})
+
+test('historial sustituye ventanas sin duplicar; conserva errores y no convierte null en cero', async () => {
+  vi.useFakeTimers()
+  const dato = base()
+  dato.datos.capacidad_series = 100
+  dato.datos.retencion_s = 600
+  dato.datos.historial = [
+    { id_serie: 'primera', destinos: [fila()] },
+    { id_serie: 'segunda', destinos: [{ ...fila(), calidad: 'no_disponible', respuestas: 0,
+      errores: 5, sin_respuesta: 0, rtt_ms: { promedio: null } }] },
+  ]
+  vi.stubGlobal('fetch', vi.fn(async () => ok(dato)))
+  vista = mount(Conectividad)
+  await flushPromises()
+  const historial = () => vista.findAll('.historial-icmp tbody tr')
+  expect(historial()).toHaveLength(2)
+  expect(historial()[0].text()).toContain('Sin medición utilizable')
+  expect(historial()[0].text()).toContain('No disponible')
+  expect(vista.get('.historial-icmp [role="region"]').attributes('tabindex')).toBe('0')
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(historial()).toHaveLength(2)
+  dato.datos.historial = [dato.datos.historial[1]]
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(historial()).toHaveLength(1)
+  dato.datos.historial = []
+  dato.datos.id_contexto = 'B'
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(historial()).toHaveLength(0)
 })

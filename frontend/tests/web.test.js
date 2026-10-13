@@ -1,4 +1,4 @@
-// Simula la API DNS/HTTPS y su recuperación; comprueba resultados independientes, caducidad y sustitución de contexto sin red pública.
+// Simula la API DNS/HTTPS y su recuperación; comprueba resultados independientes, caducidad del historial y sustitución de contexto sin red pública.
 import { afterEach, expect, test, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import ServiciosWeb from '../src/components/ServiciosWeb.vue'
@@ -87,4 +87,37 @@ test('valida el contrato antes de renderizar', async () => {
     .mockResolvedValueOnce(ok({ version_esquema: 1, datos: { estado: 'activo', resultados: [{}] } })))
   await expect(consultarWeb()).rejects.toThrow('HTTP 404')
   await expect(consultarWeb()).rejects.toThrow('formato no compatible')
+})
+
+test('historial muestra fallo y recuperación, se congela y caduca sin duplicar filas', async () => {
+  vi.useFakeTimers()
+  const dato = base()
+  dato.datos.capacidad_series = 100
+  dato.datos.retencion_s = 600
+  dato.datos.historial = [
+    { id_serie: 'fallo', resultados: [{ ...dato.datos.resultados[0], estado: 'tiempo_agotado', duracion_ms: null }] },
+    { id_serie: 'recuperacion', resultados: [dato.datos.resultados[0]] },
+  ]
+  const pedir = vi.fn(async () => ok(dato))
+  vi.stubGlobal('fetch', pedir)
+  vista = mount(ServiciosWeb)
+  await flushPromises()
+  const filas = () => vista.findAll('.historial-web tbody tr')
+  expect(filas()).toHaveLength(2)
+  expect(filas()[0].text()).toContain('Comprobación correcta')
+  expect(filas()[1].text()).toContain('Tiempo de espera agotado')
+  expect(filas()[1].text()).toContain('No disponible')
+  expect(filas()[0].text()).toContain('No aplica')
+  expect(vista.get('.historial-web [role="region"]').attributes('tabindex')).toBe('0')
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(filas()).toHaveLength(2)
+  pedir.mockRejectedValueOnce(new Error('API inaccesible'))
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(vista.get('.historial-web').text()).toContain('Historial conservado sin actualizar')
+  expect(filas()).toHaveLength(2)
+  dato.datos.historial = []
+  dato.datos.resultados = []
+  dato.datos.id_contexto = 'B'
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(filas()).toHaveLength(0)
 })

@@ -1,10 +1,12 @@
-<!-- Recibe resultados DNS/HTTPS de api.js mediante useResumen; muestra fechas y fallos separados de ICMP, sin calcular salud global. -->
+<!-- Recibe resultados DNS/HTTPS de api.js mediante useResumen; muestra últimos intentos e historial con fechas y fallos separados de ICMP, sin calcular salud global. -->
 <script setup>
 import { computed } from 'vue'
 import { consultarWeb } from '../api.js'
 import { useResumen } from '../useResumen.js'
 const { respuesta, error, cargando, recuperada } = useResumen(consultarWeb)
 const datos = computed(() => respuesta.value?.datos)
+const historial = computed(() => [...(datos.value?.historial ?? [])].reverse().flatMap(serie =>
+  serie.resultados.map(fila => ({ ...fila, clave: `${serie.id_serie}-${fila.tipo}` }))))
 const estados = { esperando_contexto: 'Esperando contexto de red', sin_contexto: 'Contexto no disponible',
   midiendo: 'Comprobando DNS y HTTPS', en_espera: 'Esperando la siguiente comprobación',
   detenido: 'Monitor detenido', desactivada: 'Comprobaciones desactivadas', error: 'Fallo del monitor' }
@@ -37,6 +39,23 @@ function numero(valor, unidad) { return valor == null ? 'No disponible' : `${val
         <p>Duración de la operación: {{ numero(fila.duracion_ms, 'ms') }}. No es RTT de ping.</p>
         <p>Último intento: {{ fecha(fila.fin) }}. Antigüedad al consultar: {{ numero(fila.antiguedad_s == null ? null : fila.antiguedad_s.toFixed(1), 's') }}.</p>
       </article>
+      <details class="historial-web">
+        <summary>¿Fue un fallo aislado o se repite? Ver evolución DNS/HTTPS</summary>
+        <p>Comprobaciones del contexto actual, de la más reciente a la más antigua. Se conservan hasta {{ datos.capacidad_series ?? '—' }} ciclos y {{ datos.retencion_s ?? '—' }} segundos. Reiniciar Python borra esta memoria.</p>
+        <p v-if="error" class="aviso">Historial conservado sin actualizar mientras la API no responde.</p>
+        <p v-if="!historial.length">Todavía no hay comprobaciones conservadas en esta ventana.</p>
+        <div v-else class="tabla" tabindex="0" role="region" aria-label="Evolución DNS y HTTPS; tabla desplazable">
+          <table>
+            <caption>Resultados por intento; una comprobación correcta posterior no borra el fallo anterior de la ventana retenida.</caption>
+            <thead><tr><th scope="col">Fin</th><th scope="col">Prueba y destino</th><th scope="col">Resultado</th><th scope="col">Duración de operación</th><th scope="col">HTTP</th></tr></thead>
+            <tbody><tr v-for="fila in historial" :key="fila.clave">
+              <td>{{ fecha(fila.fin) }}</td><td>{{ fila.tipo.toUpperCase() }} · {{ fila.destino }}</td><td>{{ resultados[fila.estado] ?? fila.estado }}</td>
+              <td>{{ numero(fila.duracion_ms, 'ms') }}</td><td>{{ fila.tipo === 'dns' ? 'No aplica' : fila.codigo_http ?? 'No disponible' }}</td>
+            </tr></tbody>
+          </table>
+        </div>
+        <p>DNS y HTTPS tienen duraciones distintas y no equivalen al RTT de ping. No hay mediciones continuas entre filas ni un porcentaje de salud. Un cambio de contexto inicia otra ventana visible.</p>
+      </details>
       <p v-if="datos.intervalo_s">Una comprobación de cada tipo por ciclo; siguiente ciclo {{ datos.intervalo_s }} segundos después de terminar. Límite por comprobación: {{ datos.limite_s }} segundos. Vigencia: {{ datos.vigencia_s }} segundos.</p>
     </template>
     <details><summary>Qué comprueban DNS y HTTPS</summary>

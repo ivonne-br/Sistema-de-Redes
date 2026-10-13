@@ -1,10 +1,11 @@
 """Comprueba resolución de nombres y HTTPS, sin ARP ni cambios en el DNS del Mac.
 
-Entradas: configuración y contexto IPv4; salidas: últimas comprobaciones para la
+Entradas: configuración y contexto IPv4; salidas: últimas comprobaciones e historial temporal para la
 API. Las operaciones de red se aíslan en procesos acotados para limitar también
 getaddrinfo. Este módulo sirve como trabajador con `python -m backend.web`.
 """
 
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -88,7 +89,7 @@ def ejecutar_comprobacion(tipo, destino, limite, codigo=204):
 
 
 class MonitoreoWeb:
-    """Un par DNS/HTTPS por ciclo, con memoria acotada al último intento por tipo."""
+    """Un par DNS/HTTPS por ciclo, con historial limitado por capacidad y retención."""
 
     def __init__(self, configuracion=None, *, consultar_contexto=consultar_contexto_ipv4,
                  sonda=ejecutar_comprobacion, reloj=monotonic):
@@ -96,6 +97,7 @@ class MonitoreoWeb:
         self._contexto, self._sonda, self._reloj = consultar_contexto, sonda, reloj
         self._parada, self._lock, self._ciclo_lock = Event(), Lock(), Lock()
         self._clave = None
+        self._historial = deque(maxlen=self.config.memoria.capacidad)
         self._datos = {'estado': 'esperando_contexto', 'id_contexto': None, 'contexto': None,
                        'detalle': None, 'resultados': []}
 
@@ -152,21 +154,40 @@ class MonitoreoWeb:
                 self._sin_contexto()
                 return
             with self._lock:
+                self._historial.append({'id_serie': str(uuid4()), 'id_contexto': self._datos['id_contexto'],
+                                        '_instante': self._reloj(), 'resultados': resultados})
                 self._datos.update(estado='detenido' if self._parada.is_set() else 'en_espera', resultados=resultados)
         finally:
             self._ciclo_lock.release()
 
     def estado(self):
-        """Entrega copias con fechas propias; expira datos, sin provocar solicitudes."""
+        """Devuelve copias del tramo actual; expira historia sin renovar fechas ni medir."""
         with self._lock:
             ahora = self._reloj()
+            while self._historial and ahora - self._historial[0]['_instante'] >= self.config.memoria.retencion_s:
+                self._historial.popleft()
             self._datos['resultados'] = [r for r in self._datos['resultados']
                                         if ahora - r['_instante'] < self.config.memoria.retencion_s]
             dato = deepcopy(self._datos)
-        for fila in dato['resultados']:
-            fila['antiguedad_s'] = max(0, ahora - fila.pop('_instante'))
-            fila['vigencia'] = 'vigente' if fila['antiguedad_s'] < 120 else 'desactualizado'
-        return {**dato, 'intervalo_s': self.config.intervalo_web_s, 'limite_s': self.config.limite_web_s,
+            historial = deepcopy([s for s in self._historial if s['id_contexto'] == dato['id_contexto']])
+        def presentar(filas):
+            salida = []
+            for fila in filas:
+                edad = max(0, ahora - fila.pop('_instante'))
+                if edad < self.config.memoria.retencion_s:
+                    fila.update(antiguedad_s=edad, vigencia='vigente' if edad < 120 else 'desactualizado')
+                    salida.append(fila)
+            return salida
+        dato['resultados'] = presentar(dato['resultados'])
+        ventana = []
+        for serie in historial:
+            serie['antiguedad_s'] = max(0, ahora - serie.pop('_instante'))
+            serie['resultados'] = presentar(serie['resultados'])
+            if serie['resultados']:
+                ventana.append(serie)
+        return {**dato, 'historial': ventana, 'series_conservadas': len(ventana),
+                'capacidad_series': self.config.memoria.capacidad, 'retencion_s': self.config.memoria.retencion_s,
+                'intervalo_s': self.config.intervalo_web_s, 'limite_s': self.config.limite_web_s,
                 'vigencia_s': 120, 'codigo_https_esperado': self.config.codigo_https_esperado}
 
     def ejecutar(self):
