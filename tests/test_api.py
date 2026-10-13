@@ -1,4 +1,4 @@
-"""HTTP en loopback con fuentes artificiales; ninguna sonda ni consulta ARP real."""
+"""HTTP en loopback con fuentes artificiales; ninguna sonda ICMP/DNS/HTTPS ni consulta ARP real."""
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, redirect_stdout, redirect_stderr
@@ -26,8 +26,8 @@ class PruebasAPI(unittest.TestCase):
         self.logger.propagate = False
 
     @contextmanager
-    def servicio(self, *, arp=None, esperar_muestra=True, busqueda=None):
-        config = ConfiguracionBackend(puerto_api=0, intervalo_arp_s=60, busqueda_activa=busqueda is not None)
+    def servicio(self, *, arp=None, esperar_muestra=True, busqueda=None, conectividad=None, web=None):
+        config = ConfiguracionBackend(web_activa=web is not None, puerto_api=0, intervalo_arp_s=60, busqueda_activa=busqueda is not None, conectividad_activa=conectividad is not None)
         fuente = arp if arp is not None else Mock(return_value=lectura())
         fuente_contexto = Mock(return_value=contexto())
         c = CoordinadorARP(config, consultar_arp=fuente, consultar_contexto=fuente_contexto)
@@ -38,7 +38,8 @@ class PruebasAPI(unittest.TestCase):
             guardada.set()
         c.memoria.guardar = Mock(side_effect=guardar)
         app = APILocal(config, crear_coordinador=Mock(return_value=c), logger=self.logger,
-                       crear_busqueda=Mock(return_value=busqueda))
+                       crear_busqueda=Mock(return_value=busqueda),
+                       crear_conectividad=Mock(return_value=conectividad), crear_web=Mock(return_value=web))
         errores = []
         def ejecutar():
             try:
@@ -189,7 +190,7 @@ class PruebasAPI(unittest.TestCase):
 
     def test_cli_senales_restauradas_y_json_inicio(self):
         for senal in (signal.SIGINT, signal.SIGTERM):
-            app = APILocal(ConfiguracionBackend(puerto_api=0, busqueda_activa=False), logger=self.logger,
+            app = APILocal(ConfiguracionBackend(puerto_api=0, busqueda_activa=False, conectividad_activa=False, web_activa=False), logger=self.logger,
                            crear_coordinador=lambda conf: CoordinadorARP(conf,
                                consultar_contexto=Mock(return_value=contexto()),
                                consultar_arp=Mock(return_value=lectura())))
@@ -243,3 +244,49 @@ class PruebasAPI(unittest.TestCase):
             prueba.bind(('127.0.0.1', app.puerto))
         with self.servicio() as (otra, _, _, _):
             self.assertEqual(self.pedir(otra, '/api/v1/estado')[0], 200)
+
+    def test_conectividad_independiente_de_arp_y_consultas_no_inician_sondas(self):
+        parada = Event()
+        monitor = Mock()
+        monitor.ejecutar.side_effect = lambda: parada.wait(4)
+        monitor.detener.side_effect = parada.set
+        monitor.estado.return_value = {'estado': 'en_espera', 'destinos': [{'ipv4': '1.1.1.1'}]}
+        with self.servicio(arp=Mock(return_value=lectura('sin_datos_visibles')), conectividad=monitor) as (app, _, _, _):
+            for _ in range(3):
+                codigo, _, dato = self.pedir(app, '/api/v1/conectividad')
+                self.assertEqual(codigo, 200)
+                self.assertEqual(dato['datos']['destinos'][0]['ipv4'], '1.1.1.1')
+            monitor.ejecutar.assert_called_once()
+            self.assertEqual(self.pedir(app, '/api/v1/conectividad?id_contexto=00000000-0000-0000-0000-000000000000')[0], 400)
+            self.assertEqual(self.pedir(app, '/api/v1/conectividad', headers={'Origin': 'https://externo.test'})[0], 403)
+            monitor.estado.side_effect = RuntimeError('dato-privado')
+            codigo, _, dato = self.pedir(app, '/api/v1/conectividad')
+            self.assertEqual(codigo, 500)
+            self.assertNotIn('dato-privado', json.dumps(dato))
+        monitor.detener.assert_called()
+
+    def test_conectividad_desactivada(self):
+        with self.servicio() as (app, _, _, _):
+            self.assertEqual(self.pedir(app, '/api/v1/conectividad')[2]['datos']['estado'], 'desactivada')
+            app._crear_conectividad.assert_not_called()
+
+    def test_web_independiente_ciclo_de_vida_protecciones_y_lectura(self):
+        parada = Event()
+        monitor = Mock()
+        monitor.ejecutar.side_effect = lambda: parada.wait(4)
+        monitor.detener.side_effect = parada.set
+        monitor.estado.return_value = {'estado': 'en_espera', 'resultados': []}
+        with self.servicio(arp=Mock(return_value=lectura('sin_datos_visibles')), web=monitor) as (app, _, _, _):
+            for _ in range(3):
+                self.assertEqual(self.pedir(app, '/api/v1/web')[0], 200)
+            monitor.ejecutar.assert_called_once()
+            self.assertEqual(self.pedir(app, '/api/v1/web?id_contexto=00000000-0000-0000-0000-000000000000')[0], 400)
+            self.assertEqual(self.pedir(app, '/api/v1/web', headers={'Origin': 'https://externo.test'})[0], 403)
+            monitor.estado.side_effect = RuntimeError('dato-privado')
+            codigo, _, dato = self.pedir(app, '/api/v1/web')
+            self.assertEqual(codigo, 500)
+            self.assertNotIn('dato-privado', json.dumps(dato))
+        monitor.detener.assert_called()
+        with self.servicio() as (app, _, _, _):
+            self.assertEqual(self.pedir(app, '/api/v1/web')[2]['datos']['estado'], 'desactivada')
+            app._crear_web.assert_not_called()

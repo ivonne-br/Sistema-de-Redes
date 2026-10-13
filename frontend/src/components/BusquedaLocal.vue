@@ -1,4 +1,4 @@
-<!-- Recibe sondas, asociaciones y vigencia HTTP de App; prioriza respuestas recientes y oculta el historial en un detalle desplegable. -->
+<!-- Recibe sondas, asociaciones y vigencia HTTP de App; presenta respuestas recientes y el estado del barrido actual, con comprobaciones anteriores desplegables. -->
 <script setup>
 import { computed } from 'vue'
 const props = defineProps({ busqueda: Object, actualizada: { type: Boolean, default: true }, asociaciones: { type: Array, default: () => [] } })
@@ -38,7 +38,9 @@ function fecha(valor) { return valor ? new Date(valor).toLocaleString('es-MX') :
       </div>
       <p>Un equipo puede ignorar ICMP: «sin respuesta» no confirma desconexión. Una respuesta a una IPv4 no valida que pertenezca a una MAC histórica.</p>
       <p v-if="busqueda.intervalo_s != null">El siguiente barrido empieza {{ busqueda.intervalo_s }} segundos después de terminar el anterior.
-        Último fin de barrido: {{ fecha(busqueda.fin_barrido) }}.</p>
+        <span v-if="busqueda.fin_barrido">Fin del barrido mostrado: {{ fecha(busqueda.fin_barrido) }}.</span>
+        <span v-else-if="busqueda.estado === 'buscando'">{{ actualizada ? 'Barrido en curso; aún no tiene fecha de fin.' : 'En la última consulta, el barrido seguía en curso.' }}</span>
+        <span v-else>Sin fecha de fin disponible para este barrido.</span></p>
       <details>
       <summary>Ver últimas comprobaciones, incluidas las que ya no tienen respuesta reciente</summary>
       <p v-if="!filas.length">Todavía no hay comprobaciones de asociaciones conocidas ni IPv4 que hayan respondido en este contexto.</p>
