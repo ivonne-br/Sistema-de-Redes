@@ -1,7 +1,11 @@
-"""Ciclo de vida de ARP local y consulta de resultados derivados de su memoria."""
+"""Coordina lecturas ARP y contexto IPv4 según la configuración recibida.
+
+Produce observaciones para MemoriaObservaciones y delega consultas a ConsultaARP.
+Comparte con la memoria un reloj que incluye reposo para calcular sus edades.
+"""
 
 from threading import Event, Lock
-from time import monotonic
+from backend.reloj import tiempo_continuo
 from uuid import uuid4
 
 from backend.arp_macos import consultar_arp_sistema
@@ -15,7 +19,7 @@ from backend.memoria import MemoriaObservaciones, clave_contexto
 class CoordinadorARP:
     """Una ejecución serial y una memoria; las dependencias permiten pruebas sin red."""
 
-    def __init__(self, configuracion=None, *, memoria=None, reloj=monotonic,
+    def __init__(self, configuracion=None, *, memoria=None, reloj=tiempo_continuo,
                  consultar_contexto=consultar_contexto_ipv4, consultar_arp=consultar_arp_sistema,
                  parada=None):
         self.configuracion = configuracion if configuracion is not None else ConfiguracionBackend()

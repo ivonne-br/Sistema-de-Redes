@@ -1,4 +1,4 @@
-"""Contextos, reloj y sondas artificiales verifican métricas, historial acotado y ciclo de vida sin red real; se consulta el mismo contrato que sirve la API."""
+"""Contextos, reloj y sondas artificiales verifican métricas, recuentos e historial acotado y ciclo de vida sin red real; se consulta el mismo contrato que sirve la API."""
 
 from threading import Event, Thread
 import unittest
@@ -228,3 +228,43 @@ class PruebasConectividad(unittest.TestCase):
         self.assertNotEqual(m.estado()['id_contexto'], dato['id_contexto'])
         self.tiempo = 130
         self.assertEqual(m.estado()['historial'], [])
+
+    def test_resumen_separa_silencios_errores_omisiones_y_destinos(self):
+        from backend.conectividad import resumir_ventana
+        def fila(ip, muestras, fin):
+            return {'tipo': 'router' if ip == '192.0.2.1' else 'externo', 'ipv4': ip,
+                    'fin': fin, **resumir_serie(muestras, 3)}
+        historial = [
+            {'destinos': [fila('192.0.2.1', [respuesta(), {'estado': 'sin_respuesta'}, {'estado': 'error_recoleccion'}], 'uno'),
+                          fila('1.1.1.1', [respuesta()], 'uno')]},
+            {'destinos': [fila('192.0.2.1', [respuesta()] * 3, 'dos')]},
+        ]
+        router, externo = resumir_ventana(historial)
+        self.assertEqual((router['series'], router['respuestas'], router['realizadas']), (2, 4, 6))
+        self.assertEqual((router['sin_respuesta'], router['errores'], router['omitidas']), (1, 1, 0))
+        self.assertEqual((router['series_con_silencios'], router['series_con_errores_u_omisiones']), (1, 1))
+        self.assertTrue(router['respuesta_completa_posterior'])
+        self.assertEqual((externo['omitidas'], externo['sin_respuesta']), (2, 0))
+        self.assertFalse(externo['respuesta_completa_posterior'])
+        self.assertEqual(resumir_ventana([]), [])
+
+    def test_resumen_expira_incidencias_y_no_se_arrastra_a_otro_contexto(self):
+        m = self.crear()
+        self.sonda.side_effect = OSError()
+        m.ciclo()
+        self.tiempo = 10
+        self.sonda.side_effect = None
+        m.ciclo()
+        dato = m.estado()['resumen_ventana']
+        self.assertTrue(dato[0]['respuesta_completa_posterior'])
+        dato[0]['series'] = 999
+        self.assertEqual(m.estado()['resumen_ventana'][0]['series'], 2)
+        self.tiempo = 600
+        resumen = m.estado()['resumen_ventana'][0]
+        self.assertEqual(resumen['series'], 1)
+        self.assertFalse(resumen['respuesta_completa_posterior'])
+        self.fuente.return_value = contexto(OTRO)
+        m.ciclo()
+        self.assertEqual(m.estado()['resumen_ventana'][0]['series'], 1)
+        self.tiempo = 1200
+        self.assertEqual(m.estado()['resumen_ventana'], [])

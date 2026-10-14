@@ -1,4 +1,4 @@
-<!-- Recibe resultados DNS/HTTPS de api.js mediante useResumen; muestra últimos intentos e historial con fechas y fallos separados de ICMP, sin calcular salud global. -->
+<!-- Recibe resultados DNS/HTTPS de api.js mediante useResumen; muestra últimos intentos, recuentos e historial con fechas y fallos separados de ICMP, sin calcular salud global. -->
 <script setup>
 import { computed } from 'vue'
 import { consultarWeb } from '../api.js'
@@ -39,6 +39,18 @@ function numero(valor, unidad) { return valor == null ? 'No disponible' : `${val
         <p>Duración de la operación: {{ numero(fila.duracion_ms, 'ms') }}. No es RTT de ping.</p>
         <p>Último intento: {{ fecha(fila.fin) }}. Antigüedad al consultar: {{ numero(fila.antiguedad_s == null ? null : fila.antiguedad_s.toFixed(1), 's') }}.</p>
       </article>
+      <div class="resumen-web" v-if="datos.resumen_ventana?.length">
+        <h3>¿Cuántas comprobaciones fueron correctas?</h3>
+        <p>Recuentos de la memoria disponible de este contexto, separados por prueba y destino. No son un porcentaje de disponibilidad de Internet.</p>
+        <p v-if="error" class="aviso">Resumen conservado sin actualizar mientras la API no responde.</p>
+        <article v-for="grupo in datos.resumen_ventana" :key="`${grupo.tipo}-${grupo.destino}`">
+          <h4>{{ grupo.tipo.toUpperCase() }} · {{ grupo.destino }}</h4>
+          <p>{{ grupo.correctos }} correctas de {{ grupo.intentos }} comprobaciones. {{ grupo.no_correctos }} no correctas.</p>
+          <ul><li v-for="(cantidad, estado) in grupo.por_estado" :key="estado">{{ resultados[estado] ?? estado }}: {{ cantidad }}</li></ul>
+          <p v-if="grupo.correcto_posterior">Hubo comprobaciones no correctas y el último intento conservado fue correcto. No demuestra una recuperación permanente.</p>
+          <p class="secundario">Intentos incluidos: {{ fecha(grupo.primer_fin) }} → {{ fecha(grupo.ultimo_fin) }}. Las cifras disminuyen al expirar los intentos.</p>
+        </article>
+      </div>
       <details class="historial-web">
         <summary>¿Fue un fallo aislado o se repite? Ver evolución DNS/HTTPS</summary>
         <p>Comprobaciones del contexto actual, de la más reciente a la más antigua. Se conservan hasta {{ datos.capacidad_series ?? '—' }} ciclos y {{ datos.retencion_s ?? '—' }} segundos. Reiniciar Python borra esta memoria.</p>

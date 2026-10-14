@@ -1,4 +1,4 @@
-"""Sondas y contexto simulados prueban DNS/HTTPS, plazos e historial acotado por contexto sin servicios públicos.
+"""Sondas y contexto simulados prueban DNS/HTTPS, plazos, recuentos e historial acotado por contexto sin servicios públicos.
 
 También comprueba el trabajador real con localhost; la API se prueba en test_api.
 """
@@ -222,3 +222,43 @@ class PruebasWeb(unittest.TestCase):
         self.tiempo = 130
         self.assertEqual(m.estado()['historial'], [])
         self.assertEqual(MonitoreoWeb(config).estado()['historial'], [])
+
+    def test_resumen_distingue_estados_y_recuperacion_por_destino(self):
+        from backend.web import resumir_ventana
+        def fila(tipo, destino, estado, fin):
+            return {'tipo': tipo, 'destino': destino, 'estado': estado, 'fin': fin}
+        historial = [
+            {'resultados': [fila('dns', 'uno.test', 'tiempo_agotado', 'uno'),
+                            fila('https', 'https://uno.test', 'certificado_invalido', 'uno')]},
+            {'resultados': [fila('dns', 'uno.test', 'correcto', 'dos'),
+                            fila('dns', 'otro.test', 'error_resolucion', 'dos')]},
+        ]
+        dns, https, otro = resumir_ventana(historial)
+        self.assertEqual((dns['intentos'], dns['correctos'], dns['no_correctos']), (2, 1, 1))
+        self.assertEqual(dns['por_estado'], {'tiempo_agotado': 1, 'correcto': 1})
+        self.assertTrue(dns['correcto_posterior'])
+        self.assertFalse(https['correcto_posterior'])
+        self.assertFalse(otro['correcto_posterior'])
+        self.assertEqual(resumir_ventana([]), [])
+
+    def test_resumen_no_conserva_fallo_expirado_ni_contexto_anterior(self):
+        m = self.crear()
+        self.sonda.side_effect = OSError()
+        m.ciclo()
+        self.tiempo = 10
+        self.sonda.side_effect = lambda *args: correcto()
+        m.ciclo()
+        self.assertTrue(m.estado()['resumen_ventana'][0]['correcto_posterior'])
+        copia = m.estado()['resumen_ventana']
+        copia[0]['por_estado']['correcto'] = 999
+        self.assertEqual(m.estado()['resumen_ventana'][0]['por_estado']['correcto'], 1)
+        self.tiempo = 600
+        resumen = m.estado()['resumen_ventana'][0]
+        self.assertEqual(resumen['intentos'], 1)
+        self.assertFalse(resumen['correcto_posterior'])
+        self.fuente.return_value = contexto(OTRO)
+        m.ciclo()
+        self.assertEqual(m.estado()['resumen_ventana'][0]['intentos'], 1)
+        self.fuente.return_value = {'estado': 'sin_ruta'}
+        m.ciclo()
+        self.assertEqual(m.estado()['resumen_ventana'], [])

@@ -1,4 +1,4 @@
-// Simula la API DNS/HTTPS y su recuperación; comprueba resultados independientes, caducidad del historial y sustitución de contexto sin red pública.
+// Simula la API DNS/HTTPS y su recuperación; comprueba resultados y recuentos independientes, caducidad del historial y sustitución de contexto sin red pública.
 import { afterEach, expect, test, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import ServiciosWeb from '../src/components/ServiciosWeb.vue'
@@ -120,4 +120,25 @@ test('historial muestra fallo y recuperación, se congela y caduca sin duplicar 
   dato.datos.id_contexto = 'B'
   await vi.advanceTimersByTimeAsync(5000)
   expect(filas()).toHaveLength(0)
+})
+
+test('recuentos separados por estado no implican recuperación permanente y se sustituyen', async () => {
+  vi.useFakeTimers()
+  const dato = base()
+  dato.datos.resumen_ventana = [{ tipo: 'dns', destino: 'www.gstatic.com', intentos: 3,
+    correctos: 1, no_correctos: 2, por_estado: { tiempo_agotado: 1, error_resolucion: 1, correcto: 1 },
+    correcto_posterior: true }]
+  const pedir = vi.fn(async () => ok(dato))
+  vi.stubGlobal('fetch', pedir)
+  vista = mount(ServiciosWeb)
+  await flushPromises()
+  expect(vista.get('.resumen-web').text()).toContain('1 correctas de 3 comprobaciones')
+  expect(vista.get('.resumen-web').text()).toContain('Tiempo de espera agotado: 1')
+  expect(vista.get('.resumen-web').text()).toContain('No demuestra una recuperación permanente')
+  pedir.mockRejectedValueOnce(new Error('API inaccesible'))
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(vista.get('.resumen-web').text()).toContain('Resumen conservado sin actualizar')
+  dato.datos.resumen_ventana = []
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(vista.find('.resumen-web').exists()).toBe(false)
 })

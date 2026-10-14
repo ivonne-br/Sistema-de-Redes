@@ -10,7 +10,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from ipaddress import IPv4Interface, IPv4Network
 from threading import Event, Lock
-from time import monotonic
+from backend.reloj import tiempo_continuo
 
 from backend.configuracion import ConfiguracionSonda
 from backend.sonda import ejecutar_sonda
@@ -33,7 +33,7 @@ class BusquedaLocal:
     """Un barrido a la vez, ocho sondas como máximo y parada entre lotes."""
 
     def __init__(self, obtener_observacion, *, intervalo_s=60, sonda=ejecutar_sonda,
-                 reloj=monotonic, parada=None):
+                 reloj=tiempo_continuo, parada=None):
         self._obtener = obtener_observacion
         self._intervalo = intervalo_s
         self._sonda = sonda
