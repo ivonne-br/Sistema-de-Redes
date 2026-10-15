@@ -6,6 +6,17 @@ import Router from '../src/components/Router.vue'
 let vista
 afterEach(() => { vista?.unmount(); vi.useRealTimers(); vi.unstubAllGlobals() })
 const ok = datos => ({ ok: true, json: async () => datos })
+test('una lectura del backend no concede acceso a una vista sin clave', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => ok({ version_esquema: 1, datos: {
+    autorizada: false, estado: 'lectura_correcta', tablas: {}, series: [],
+  } })))
+  vista = mount(Router)
+  await flushPromises()
+  expect(vista.text()).toContain('Esta vista no tiene acceso autorizado')
+  expect(vista.text()).toContain('máximo 30 minutos')
+  expect(vista.text()).not.toContain('Último ciclo de lectura correcto')
+  expect(vista.find('table').exists()).toBe(false)
+})
 test('envía credenciales solo al endpoint local y limpia el formulario', async () => {
   const consulta = vi.fn(async (_, opciones) => opciones.method === 'POST'
     ? ok({ clave: 'local' }) : ok({ version_esquema: 1, datos: {
@@ -87,7 +98,42 @@ test('no une tasas nulas ni intervalos largos en la gráfica', async () => {
 
 test('oculta el inventario al alcanzar el límite local aunque la API siga autorizada', async () => {
   await preparar()
-  await vi.advanceTimersByTimeAsync(900000)
+  await vi.advanceTimersByTimeAsync(1800000)
   expect(vista.text()).not.toContain('Equipo de prueba')
   expect(vista.text()).toContain('Acceso caducado')
+})
+
+test('restaura una sesión HttpOnly al montar sin login y respeta su tiempo restante', async () => {
+  vi.useFakeTimers()
+  const consulta = vi.fn(async () => ok({ version_esquema: 1, datos: {
+    estado: 'lectura_correcta', autorizada: true, restante_s: 2,
+    tablas: { 'dhcp-json': { fecha: new Date().toISOString(), recuento: { total: 1 },
+      equipos: [{ nombre: 'Equipo restaurado', ipv4: '192.0.2.2', mac: '02:00:00:00:00:01' }] } }, series: [],
+  } }))
+  vi.stubGlobal('fetch', consulta)
+  vista = mount(Router)
+  await flushPromises()
+  expect(vista.text()).toContain('Equipo restaurado')
+  expect(consulta).toHaveBeenCalledTimes(1)
+  expect(consulta.mock.lastCall[1].credentials).toBe('same-origin')
+  expect(consulta.mock.lastCall[1].headers).toEqual({})
+  await vi.advanceTimersByTimeAsync(2000)
+  expect(vista.text()).not.toContain('Equipo restaurado')
+})
+
+test('cerrar una sesión cookie no permite que una consulta tardía restaure la vista', async () => {
+  vi.useFakeTimers()
+  const consulta = vi.fn(async (_, opciones) => {
+    if (opciones.method === 'DELETE') throw new Error('Respuesta perdida')
+    return ok({ version_esquema: 1, datos: { estado: 'lectura_correcta', autorizada: true,
+      restante_s: 600, tablas: {}, series: [] } })
+  })
+  vi.stubGlobal('fetch', consulta)
+  vista = mount(Router)
+  await flushPromises()
+  await vista.get('button').trigger('click')
+  await flushPromises()
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(vista.text()).not.toContain('Finalizar acceso de lectura')
+  expect(vista.text()).toContain('no se confirmó la retirada')
 })

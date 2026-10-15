@@ -1,30 +1,50 @@
 <!-- Consulta memoria protegida del backend y autoriza lectura temporal del router.
      Entradas: API local y sesión del panel introducida aquí; salida: DHCP y series WAN.
-     Secretos solo en memoria, sin preferencias ni almacenamiento del navegador. -->
+     El inventario DHCP no aporta consumo individual; la vista expresa esa limitación.
+     Contraseña solo durante el envío; permiso local en cookie HttpOnly de sesión,
+     nunca en preferencias. Admite la clave en memoria de versiones anteriores. -->
 <script setup>
 import { computed, onUnmounted, ref } from 'vue'
 import { useResumen } from '../useResumen.js'
 
 const clave = ref(''), cookie = ref(''), csrf = ref(''), confirmado = ref(false)
+const sesionCookie = ref(false)
+const acceso = computed(() => Boolean(clave.value || sesionCookie.value))
+let revision = 0
+let retiradaLocal = false
 const usuario = ref(''), password = ref(''), avanzado = ref(false)
 const pendiente = ref(false), mensaje = ref(''), vence = ref(0), ahora = ref(Date.now())
 const reloj = setInterval(() => { ahora.value = Date.now() }, 1000)
 onUnmounted(() => { clearInterval(reloj); password.value = ''; clave.value = ''; cookie.value = ''; csrf.value = '' })
 const { respuesta, error, cargando } = useResumen(async signal => {
-  const enviada = clave.value
+  const enviada = clave.value, consultaRevision = revision
   const headers = enviada ? { 'X-Router-Authorization': enviada } : {}
-  const r = await fetch('/api/v1/router', { signal, headers, cache: 'no-store' })
+  const r = await fetch('/api/v1/router', { signal, headers, cache: 'no-store', credentials: 'same-origin' })
   if (!r.ok) throw new Error(`Consulta del router: HTTP ${r.status}.`)
   const cuerpo = await r.json()
-  if (enviada !== clave.value) throw new Error('El acceso cambió durante la consulta; actualizando.')
+  if (consultaRevision !== revision) throw new Error('El acceso cambió durante la consulta; actualizando.')
   if (cuerpo.version_esquema !== 1 || typeof cuerpo.datos?.autorizada !== 'boolean'
       || !cuerpo.datos.tablas || !Array.isArray(cuerpo.datos.series)) throw new Error('Respuesta del router no compatible.')
-  if (clave.value && cuerpo.datos.estado !== 'verificando_compatibilidad') mensaje.value = ''
-  if (clave.value && !cuerpo.datos.autorizada) clave.value = ''
+  if (retiradaLocal) {
+    cuerpo.datos = { ...cuerpo.datos, autorizada: false, tablas: {}, series: [] }
+  }
+  if (cuerpo.datos.autorizada) {
+    if (!clave.value) {
+      if (!Number.isFinite(cuerpo.datos.restante_s) || cuerpo.datos.restante_s < 0 || cuerpo.datos.restante_s > 1800) throw new Error('Caducidad de sesión no compatible.')
+      sesionCookie.value = true
+    }
+    if (Number.isFinite(cuerpo.datos.restante_s)) {
+      const limiteServidor = Date.now() + cuerpo.datos.restante_s * 1000
+      vence.value = vence.value ? Math.min(vence.value, limiteServidor) : limiteServidor
+    }
+    if (cuerpo.datos.estado !== 'verificando_compatibilidad') mensaje.value = ''
+  } else {
+    clave.value = ''; sesionCookie.value = false; vence.value = 0
+  }
   return cuerpo
 })
 const datos = computed(() => respuesta.value?.datos)
-const visible = computed(() => !error.value && clave.value && datos.value?.autorizada && ahora.value < vence.value)
+const visible = computed(() => !error.value && acceso.value && datos.value?.autorizada && ahora.value < vence.value)
 const inventario = computed(() => visible.value ? datos.value.tablas['dhcp-json'] : null)
 const etapas = { script_lectura: 'leer el script de estadísticas del router',
   validacion_sesion: 'validar la sesión mediante user_data.json', pagina_login: 'abrir la página de acceso', compatibilidad: 'comprobar compatibilidad',
@@ -54,25 +74,30 @@ async function autorizar() {
   const control = new AbortController(), limite = setTimeout(() => control.abort(), 8000)
   try {
     const r = await fetch('/api/v1/router/sesion', { method: 'POST', signal: control.signal,
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo), cache: 'no-store' })
+      headers: { 'Content-Type': 'application/json', 'X-Router-Session': 'cookie' }, body: JSON.stringify(cuerpo), cache: 'no-store', credentials: 'same-origin' })
     if (!r.ok) throw new Error('No se aceptó el acceso: verifica la red y que no exista otra sesión local activa.')
     const resultado = await r.json()
-    if (typeof resultado.clave !== 'string') throw new Error('Respuesta de autorización no compatible.')
-    clave.value = resultado.clave; vence.value = Date.now() + 900000
+    if (resultado.sesion !== 'cookie' && typeof resultado.clave !== 'string') throw new Error('Respuesta de autorización no compatible.')
+    revision++
+    retiradaLocal = false
+    sesionCookie.value = resultado.sesion === 'cookie'
+    clave.value = sesionCookie.value ? '' : resultado.clave; vence.value = Date.now() + 1800000
     mensaje.value = 'Acceso local creado. El recolector comprobará el router; aún no confirma una lectura correcta.'
-  } catch { mensaje.value = 'No se pudo autorizar. Comprueba la sesión y la red. Si la respuesta se perdió, el permiso pendiente caduca en 15 minutos.' }
+  } catch { mensaje.value = 'No se pudo autorizar. Comprueba la sesión y la red. Si la respuesta se perdió, el permiso pendiente caduca en 30 minutos.' }
   finally { cuerpo.password = ''; cuerpo.cookie = ''; cuerpo.csrf = ''; clearTimeout(limite); pendiente.value = false }
 }
 async function cerrar() {
   const actual = clave.value
-  clave.value = ''; respuesta.value = null; mensaje.value = ''
+  revision++
+  retiradaLocal = true
+  clave.value = ''; sesionCookie.value = false; respuesta.value = null; mensaje.value = ''; vence.value = 0
   const control = new AbortController(), limite = setTimeout(() => control.abort(), 8000)
   try {
     const r = await fetch('/api/v1/router/sesion', { method: 'DELETE', signal: control.signal,
-      headers: { 'X-Router-Authorization': actual }, cache: 'no-store' })
+      headers: actual ? { 'X-Router-Authorization': actual } : {}, cache: 'no-store', credentials: 'same-origin' })
     if (!r.ok && r.status !== 401) throw new Error()
     mensaje.value = 'Acceso de la aplicación retirado. La sesión original del panel se conserva.'
-  } catch { mensaje.value = 'Vista privada cerrada; no se confirmó la retirada en el backend. Caducará en un máximo de 15 minutos.' }
+  } catch { mensaje.value = 'Vista privada cerrada; no se confirmó la retirada en el backend. Caducará en un máximo de 30 minutos.' }
   finally { clearTimeout(limite) }
 }
 const grupos = computed(() => {
@@ -100,23 +125,35 @@ const grupos = computed(() => {
 <template>
   <section aria-labelledby="router-titulo">
     <h2 id="router-titulo">Dispositivos y tráfico del router</h2>
+    <p>Aquí puedes ver los equipos que informa tu router y cuántos datos pasan por sus conexiones de Internet.</p>
+    <p v-if="!acceso">Necesitas permiso y acceso al router para ver estos datos. Si estás en la escuela o en una red ajena, puedes usar los otros paneles sin conectar el router.</p>
+    <details><summary>¿Qué significan bajada, subida y consumo?</summary>
+      <p><strong>Bajada:</strong> datos que llegan desde Internet, por ejemplo al ver un video o descargar un juego.</p>
+      <p><strong>Subida:</strong> datos que envías a Internet, por ejemplo en una videollamada o al subir fotos.</p>
+      <p><strong>Mb/s:</strong> cantidad de datos que pasan cada segundo. Las gráficas muestran el uso observado, no la velocidad máxima de tu contrato.</p>
+      <p><strong>Consumo:</strong> cantidad acumulada durante un periodo, expresada en MB o GB. No es lo mismo que Mb/s.</p>
+      <p>Un tráfico alto no significa una red en mal estado. Para investigar lentitud hay que comprobar si coincide con respuestas más lentas o cortes; la coincidencia no demuestra la causa.</p>
+    </details>
     <p v-if="cargando">Buscando el estado del recolector…</p>
-    <p v-if="error" role="status">{{ error }} Los datos privados se ocultan mientras no se pueda verificar el acceso.</p>
-    <p v-if="datos" role="status">{{ etiquetas[datos.estado] ?? 'Lectura no disponible' }}</p>
+    <details v-if="error"><summary>Datos del router no disponibles. Ver detalle</summary><p role="status">{{ error }} Los datos privados se ocultan mientras no se pueda verificar el acceso.</p></details>
+    <p v-if="datos" role="status">{{ !acceso && ['lectura_correcta', 'verificando_compatibilidad', 'error_fuente'].includes(datos.estado) ? 'Esta vista no tiene acceso autorizado a los datos del router.' : etiquetas[datos.estado] ?? 'Lectura no disponible' }}</p>
+    <p v-if="datos && !acceso && ['lectura_correcta', 'verificando_compatibilidad', 'error_fuente'].includes(datos.estado)">Hay una lectura en curso en el backend. Si pertenece a otro navegador o a una versión anterior, espera a que caduque (máximo 30 minutos desde su inicio), o finalízala desde la vista que tenga acceso.</p>
     <p v-if="datos?.etapa_error">El fallo ocurrió al {{ etapas[datos.etapa_error] ?? 'consultar el router' }}.</p>
     <p v-if="mensaje" role="status">{{ mensaje }}</p>
     <p v-if="datos?.gateway_candidato">Puerta de enlace candidata: <strong>{{ datos.gateway_candidato }}</strong>. Esa dirección por sí sola no identifica el modelo.</p>
-    <p v-if="clave && datos?.etapa_error">La sesión temporal se conserva; se volverá a intentar la consulta de lectura, sin reenviar la contraseña. Puedes finalizar el acceso.</p>
-    <button v-if="clave" type="button" @click="cerrar">Finalizar acceso de lectura</button>
-    <p v-if="clave && ahora >= vence">Acceso caducado: datos ocultos.</p>
+    <p v-if="acceso && datos?.etapa_error">La sesión temporal se conserva; se volverá a intentar la consulta de lectura, sin reenviar la contraseña. Puedes finalizar el acceso.</p>
+    <button v-if="acceso" type="button" @click="cerrar">Finalizar acceso de lectura</button>
+    <p v-if="acceso && ahora < vence">Acceso de lectura: quedan aproximadamente {{ Math.ceil((vence - ahora) / 60000) }} minutos. Cambiar de red retira el permiso.</p>
+    <p v-if="acceso && ahora >= vence">Acceso caducado: datos ocultos.</p>
     <details v-if="datos?.gateway_candidato && !error">
       <summary>Conectar router Sercomm</summary>
       <p>Usa el usuario de administración con el que entras al panel del router; no el nombre de la red Wi-Fi.</p>
       <p>Introduce el usuario y la contraseña del panel del router. Se realizará un solo intento; si falla, revisa el mensaje antes de volver a autorizar.</p>
-      <p>Los valores se introducen solo aquí y se conservan en memoria durante un máximo de 15 minutos. El router observado usa HTTP: el envío al router no está cifrado. La aplicación inicia sesión y después consulta las tablas; no cambia la configuración. La contraseña se descarta tras el intento.</p>
+      <p>Los valores se introducen solo aquí y se conservan en memoria durante un máximo de 30 minutos. El router observado usa HTTP: el envío al router no está cifrado. La aplicación inicia sesión y después consulta las tablas; no cambia la configuración. La contraseña se descarta tras el intento.</p>
+      <p>El permiso local se conserva al recargar mediante una cookie de sesión HttpOnly, sin guardar la contraseña. Se comparte entre las pestañas de este perfil del navegador en la misma dirección local y caduca a los 30 minutos, aunque recargues. Usa «Finalizar acceso de lectura» para volver a la consulta como invitado.</p>
       <label><input v-model="avanzado" type="checkbox" /> Usar una sesión existente (avanzado)</label>
       <form @submit.prevent="autorizar">
-        <fieldset :disabled="pendiente || Boolean(clave)">
+        <fieldset :disabled="pendiente || acceso">
         <template v-if="!avanzado">
           <label>Usuario del router <input v-model="usuario" autocomplete="off" maxlength="128" required /></label>
           <label>Contraseña del router <input v-model="password" type="password" autocomplete="off" maxlength="1024" required /></label>
@@ -126,9 +163,9 @@ const grupos = computed(() => {
         <label>Token CSRF del panel <input v-model="csrf" type="password" autocomplete="off" maxlength="256" required /></label>
         </template>
         <label><input v-model="confirmado" type="checkbox" required /> Confirmo que tengo autorización para acceder al router Sercomm en {{ datos.gateway_candidato }} y autorizo su lectura temporal.</label>
-        <button type="submit">{{ pendiente || clave ? 'Acceso solicitado' : 'Iniciar lectura automática' }}</button>
+        <button type="submit">{{ pendiente || acceso ? 'Acceso solicitado' : 'Iniciar lectura automática' }}</button>
         </fieldset>
-        <p v-if="clave" role="status">{{ etiquetas[datos.estado] ?? 'Esperando resultado del router…' }}</p>
+        <p v-if="acceso" role="status">{{ etiquetas[datos.estado] ?? 'Esperando resultado del router…' }}</p>
       </form>
     </details>
     <template v-if="visible">
@@ -138,8 +175,9 @@ const grupos = computed(() => {
         <p>Leído: {{ fecha(inventario.fecha) }} · {{ inventario.vigencia }} · {{ inventario.recuento.total }} registros, {{ inventario.recuento.activo }} activos, {{ inventario.recuento.inactivo }} inactivos, {{ inventario.recuento.estado_desconocido }} desconocidos.</p>
         <p v-if="inventario.ultimo_intento === 'error'">Falló la última lectura DHCP; esta tabla conserva su fecha anterior.</p>
         <p>«Activo» es el estado DHCP del router, no una garantía de presencia instantánea.</p>
-        <div class="tabla-router"><table><thead><tr><th>Nombre</th><th>IP</th><th>MAC</th><th>Conexión</th><th>Estado informado</th></tr></thead>
-          <tbody><tr v-for="e in inventario.equipos" :key="`${e.ipv4}-${e.mac}`"><td>{{ e.nombre ?? 'Sin nombre' }}</td><td>{{ e.ipv4 }}</td><td>{{ e.mac }}</td><td>{{ e.conexion_original }}</td><td>{{ e.estado_original ?? `Desconocido (${e.codigo_estado_original})` }}</td></tr></tbody>
+        <p id="limite-consumo-dhcp">La tabla DHCP consultada no aporta bytes enviados ni recibidos por dispositivo. «No disponible» no significa consumo cero. Las tasas WAN se muestran por interfaz y no se pueden repartir entre los equipos.</p>
+        <div class="tabla-router"><table aria-describedby="limite-consumo-dhcp"><thead><tr><th>Nombre</th><th>IP</th><th>MAC</th><th>Conexión</th><th>Estado informado</th><th>Consumo</th></tr></thead>
+          <tbody><tr v-for="e in inventario.equipos" :key="`${e.ipv4}-${e.mac}`"><td>{{ e.nombre ?? 'Sin nombre' }}</td><td>{{ e.ipv4 }}</td><td>{{ e.mac }}</td><td>{{ e.conexion_original }}</td><td>{{ e.estado_original ?? `Desconocido (${e.codigo_estado_original})` }}</td><td>No disponible</td></tr></tbody>
         </table></div>
       </template>
       <p v-else>Inventario todavía no disponible.</p>

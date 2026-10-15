@@ -1,4 +1,4 @@
-<!-- Consulta series ICMP mediante api.js/useResumen; presenta últimas métricas, recuentos e historial temporal calculados por Python y distingue fallos, datos anteriores y recuperación. -->
+<!-- Consulta series ICMP mediante api.js/useResumen; resume respuestas y RTT, con métricas e historial desplegables calculados por Python y fallos separados. -->
 <script setup>
 import { computed } from 'vue'
 import { consultarConectividad } from '../api.js'
@@ -19,20 +19,33 @@ function edad(valor) { return valor == null ? 'No disponible' : `${valor.toFixed
 
 <template>
   <section aria-labelledby="conectividad">
-    <h2 id="conectividad">¿Responden el router y el destino externo?</h2>
-    <p>Comparamos el recorrido local hasta el router con el recorrido hasta <code>1.1.1.1</code> en Internet mediante ping (ICMP). Esto no comprueba DNS, navegación web ni velocidad del Wi‑Fi.</p>
+    <h2 id="conectividad">¿Cuánto tarda en responder?</h2>
+    <p>Es el tiempo que tarda un mensaje pequeño en ir y volver. Un tiempo menor significa una respuesta más rápida; no indica cuántos archivos puedes descargar.</p>
+    <p v-if="datos && !datos.destinos.length">Esperando una serie de mediciones del contexto actual.</p>
+    <div v-for="destino in (datos?.destinos ?? [])" :key="destino.tipo" class="resumen-destino">
+      <strong>{{ destino.tipo === 'router' ? 'Hasta tu router (dentro de tu red)' : 'Hasta Internet (sitio de prueba)' }}</strong>
+      <p v-if="error || destino.vigencia !== 'vigente'">Sin medición reciente disponible.</p>
+      <template v-else>
+        <p>Tiempo promedio: <strong>{{ numero(destino.rtt_ms.promedio, ' ms') }}</strong>. Un milisegundo (ms) es una milésima de segundo.</p>
+        <p>{{ destino.respuestas }} respuestas de {{ destino.realizadas }} intentos. {{ destino.sin_respuesta }} sin respuesta.</p>
+        <p v-if="destino.errores || destino.omitidas">La medición quedó incompleta; no podemos evaluar todos los intentos.</p>
+        <p v-else-if="destino.sin_respuesta">Algunos mensajes no recibieron respuesta. Si notas cortes, revisa si vuelve a ocurrir; esta prueba por sí sola no confirma una desconexión.</p>
+      </template>
+      <p class="secundario">Última serie: {{ fecha(destino.fin) }}. {{ error ? 'Sin actualizar' : destino.vigencia === 'vigente' ? 'Reciente' : 'Antigua' }}.</p>
+    </div>
     <div role="status" aria-live="polite">
       <p v-if="cargando">Cargando mediciones de conectividad…</p>
-      <p v-else-if="error" class="aviso">{{ error }} Se reintentará automáticamente. Si acabas de actualizar el proyecto, reinicia la API. Los resultados conservados y sus antigüedades están congelados; no describen el momento actual.</p>
+      <details v-else-if="error"><summary>No llegan nuevas mediciones. Ver detalle</summary><p>{{ error }} Se reintentará automáticamente. Los resultados conservados y sus antigüedades están congelados; no describen el momento actual.</p></details>
       <p v-else-if="recuperada">Consulta de conectividad recuperada.</p>
     </div>
-    <template v-if="datos">
+    <details v-if="datos"><summary>Ver sondas, errores y evolución ICMP</summary>
+      <p>Comparamos el recorrido local hasta el router con el recorrido hasta <code>1.1.1.1</code> en Internet mediante ping (ICMP). No es una prueba de velocidad del Wi-Fi.</p>
       <p><strong>{{ estados[datos.estado] ?? datos.estado }}</strong><span v-if="datos.estado === 'midiendo'"> · {{ datos.rondas_completadas }} de {{ datos.muestras_por_serie }} rondas terminadas</span></p>
       <p v-if="datos.detalle" class="aviso">{{ datos.detalle }}</p>
       <p v-if="!datos.destinos.length">Sin series conservadas para este contexto. No equivale a cero pérdidas.</p>
       <article v-for="destino in datos.destinos" :key="`${datos.id_contexto}-${destino.tipo}-${destino.ipv4}`" class="medicion">
         <h3>{{ destino.tipo === 'router' ? 'Router · recorrido local' : 'Destino externo · recorrido hacia Internet' }} · {{ destino.ipv4 ?? 'IPv4 no disponible' }}</h3>
-        <p><strong>{{ calidades[destino.calidad] }}</strong> · {{ destino.vigencia === 'desactualizado' ? 'Dato antiguo' : 'Dato dentro de vigencia' }}</p>
+        <p><strong>{{ calidades[destino.calidad] }}</strong> · {{ error ? 'Dato conservado sin actualizar' : destino.vigencia === 'desactualizado' ? 'Dato antiguo' : 'Dato dentro de vigencia' }}</p>
         <p v-if="destino.omision">{{ destino.omision }}</p>
         <dl class="indicadores">
           <div><dt>Respuestas / sondas realizadas</dt><dd>{{ destino.respuestas }} / {{ destino.realizadas }}</dd></div>
@@ -78,7 +91,7 @@ function edad(valor) { return valor == null ? 'No disponible' : `${valor.toFixed
         <p>Una fila representa una serie medida, no todo el tiempo entre dos filas. Los periodos sin medición no se rellenan con ceros. Al cambiar de contexto comienza otra ventana visible, incluso al volver a la misma red.</p>
       </details>
       <p v-if="datos.muestras_por_serie" class="secundario">{{ datos.muestras_por_serie }} sondas por destino y serie, con una pausa de 1 segundo entre rondas. La siguiente serie comienza {{ datos.intervalo_s }} segundos después de terminar. Vigencia: {{ datos.vigencia_s }} segundos. La vista consulta cada 5 segundos.</p>
-    </template>
+    </details>
     <details><summary>Cómo interpretar estas mediciones</summary>
       <p>RTT es el tiempo que tarda una solicitud en ir y su respuesta en volver. El porcentaje cuenta solicitudes sin respuesta dentro del plazo entre las sondas de una serie completa. Con 5 sondas, cada una representa 20 puntos porcentuales: es una muestra pequeña.</p>
       <p>Una falta de respuesta puede deberse a pérdida, filtrado o baja prioridad de ICMP. No demuestra por sí sola desconexión ni pérdida de todos los tipos de tráfico. Si el router responde y el destino externo no, sabemos que el recorrido local respondió, pero aún debemos investigar el recorrido externo.</p>

@@ -13,6 +13,26 @@ const ok = dato => ({ ok: true, json: async () => structuredClone(dato) })
 let vista
 afterEach(() => { vista?.unmount(); vi.useRealTimers(); vi.unstubAllGlobals() })
 
+test('el resumen no presenta éxito antiguo, fallo ni monitor detenido como acceso actual', async () => {
+  vi.useFakeTimers()
+  const dato = base()
+  vi.stubGlobal('fetch', vi.fn(async () => ok(dato)))
+  vista = mount(ServiciosWeb)
+  await flushPromises()
+  expect(vista.get('.resultado-principal').text()).toContain('Sí: esta computadora pudo comunicarse')
+  dato.datos.resultados[1].vigencia = 'desactualizado'
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(vista.get('.resultado-principal').text()).toContain('antigua')
+  dato.datos.resultados[1].vigencia = 'vigente'
+  dato.datos.resultados[1].estado = 'tiempo_agotado'
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(vista.get('.resultado-principal').text()).toContain('No confirma una caída')
+  dato.datos.resultados[1].estado = 'correcto'
+  dato.datos.estado = 'detenido'
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(vista.get('.resultado-principal').text()).not.toContain('Sí: esta computadora pudo comunicarse')
+})
+
 test('muestra DNS y HTTPS separados, cero no es ausencia y fallo no es éxito antiguo', async () => {
   vi.useFakeTimers()
   const dato = base()

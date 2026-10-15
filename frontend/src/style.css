@@ -1,4 +1,4 @@
-/* Presentación de App y sus tablas: adapta el espacio, distingue detalles de diagnóstico y muestra el foco de teclado. */
+/* Presentación del resumen integrado y sus tablas: navegación, paneles adaptables y foco de teclado; sin alterar datos ni permisos. */
 :root { font-family: system-ui, sans-serif; color: #172c37; background: #f1f5f6; line-height: 1.6; }
 * { box-sizing: border-box; }
 body { margin: 0; }
@@ -27,4 +27,26 @@ th { background: #edf3f5; }
 .eventos li { padding: 12px 0; border-bottom: 1px solid #d5dfe3; }
 .eventos span { display: block; overflow-wrap: anywhere; white-space: normal; }
 :focus-visible { outline: 3px solid #006c85; outline-offset: 4px; }
+.navegacion { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 24px; }
+.navegacion a { background: #163f4b; color: white; padding: 10px 16px; border-radius: 8px; text-decoration: none; }
+.paneles-conexion { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; }
+.paneles-conexion section { margin-top: 0; min-width: 0; }
+.resultado-principal { font-size: 1.15rem; font-weight: 650; border-left: 4px solid #006c85; padding-left: 14px; }
+.resumen-destino { background: #edf3f5; border-radius: 6px; padding: 12px; margin: 12px 0; }
+.resumen-destino p { margin: 6px 0; }
+.tablero { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; }
+.panel { min-width: 0; }
+.panel.completo { grid-column: 1 / -1; }
+.panel section { margin: 0; }
+.opciones-paneles { padding: 16px; background: white; border: 1px solid #cbd9de; margin: 12px 0; }
+.opciones-paneles label { display: block; margin: 8px 0; }
+.controles-panel { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px; background: #dde8ec; }
+button, select { font: inherit; padding: 6px 10px; }
+button { cursor: pointer; }
+button:disabled { cursor: default; }
+button[draggable] { cursor: grab; }
+@media (max-width: 850px) { .tablero { grid-template-columns: 1fr; } }
+pre { overflow-x: auto; background: #edf3f5; padding: 12px; }
+section, [id] { scroll-margin-top: 16px; }
+@media (max-width: 850px) { .paneles-conexion { grid-template-columns: 1fr; } }
 @media (max-width: 600px) { main { padding: 18px 12px; } section { padding: 18px 14px; } }

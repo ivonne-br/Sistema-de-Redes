@@ -122,7 +122,9 @@ class PruebasRouter(unittest.TestCase):
 
     def test_sesion_caduca_y_revocacion_impide_consultar(self):
         self.monitor.ciclo()
-        self.t = 900
+        self.t = 1501
+        self.assertTrue(self.monitor.estado(self.clave)['autorizada'])
+        self.t = 1800
         self.assertFalse(self.monitor.estado(self.clave)['autorizada'])
         self.assertEqual(self.monitor.estado()['estado'], 'autorizacion_expirada')
         self.clave = self.monitor.autorizar(self.datos)
@@ -196,6 +198,7 @@ class PruebasRouter(unittest.TestCase):
                 cabeceras = {'Content-Type': 'application/json'} | (headers or {})
                 c.request(metodo, ruta, body=json.dumps(datos) if datos is not None else None, headers=cabeceras)
                 r = c.getresponse()
+                pedir.cookie = r.getheader('Set-Cookie')
                 return r.status, json.loads(r.read())
             finally:
                 c.close()
@@ -212,5 +215,26 @@ class PruebasRouter(unittest.TestCase):
             self.assertEqual(pedir('DELETE', '/api/v1/router/sesion')[0], 401)
             self.assertEqual(pedir('DELETE', '/api/v1/router/sesion', headers=autorizado)[0], 200)
             self.assertEqual(pedir(headers=autorizado)[1]['datos']['tablas'], {})
+            status, cuerpo = pedir('POST', '/api/v1/router/sesion', self.datos,
+                                   {'X-Router-Session': 'cookie'})
+            self.assertEqual(status, 201)
+            self.assertEqual(cuerpo, {'version_esquema': 1, 'sesion': 'cookie'})
+            cookie = pedir.cookie
+            self.assertIn('HttpOnly', cookie)
+            self.assertIn('SameSite=Strict', cookie)
+            self.assertIn('Path=/api/v1/router', cookie)
+            self.assertNotIn('Max-Age', cookie)
+            self.assertNotIn('Expires', cookie)
+            cabecera_cookie = {'Cookie': cookie.split(';')[0]}
+            self.monitor.ciclo()
+            # Otra petición, sin clave JavaScript: representa recargar la página.
+            self.assertTrue(pedir(headers=cabecera_cookie)[1]['datos']['tablas'])
+            self.assertEqual(pedir()[1]['datos']['tablas'], {})
+            self.assertEqual(pedir(headers={**cabecera_cookie, 'Origin': 'https://externo.test'})[0], 403)
+            self.assertEqual(pedir('DELETE', '/api/v1/router/sesion', headers={**cabecera_cookie, 'Origin': 'https://externo.test'})[0], 403)
+            self.assertFalse(pedir(headers={'Cookie': cabecera_cookie['Cookie'] + '; ' + cabecera_cookie['Cookie']})[1]['datos']['autorizada'])
+            self.assertEqual(pedir('DELETE', '/api/v1/router/sesion', headers=cabecera_cookie)[0], 200)
+            self.assertIn('Max-Age=0', pedir.cookie)
+            self.assertFalse(pedir(headers=cabecera_cookie)[1]['datos']['autorizada'])
         finally:
             servidor.shutdown(); hilo.join(2); servidor.server_close()
