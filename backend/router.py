@@ -89,7 +89,7 @@ def _contexto(lectura):
 class MonitoreoRouter:
     """Un recolector independiente, una autorización y hasta diez minutos en RAM.
 
-    La sesión se liga al contexto completo y caduca a los quince minutos.
+    La sesión se liga al contexto completo y caduca a los treinta minutos.
     Consultar estado no inicia lecturas. Cambio/pérdida de red retira secretos
     y datos; un fallo ordinario conserva la fecha de la última muestra útil.
     """
@@ -148,7 +148,7 @@ class MonitoreoRouter:
             if not red or datos.get('id_contexto') != self._id or datos.get('confirmado') is not True:
                 raise ValueError('La red cambió o falta confirmar el destino.')
             clave = secrets.token_urlsafe(32)
-            sesion = {'clave': clave, 'vence': self._reloj() + 900, 'verificada': False}
+            sesion = {'clave': clave, 'vence': self._reloj() + 1800, 'verificada': False}
             if 'usuario' in datos:
                 usuario, password = datos.get('usuario'), datos.get('password')
                 if (not isinstance(usuario, str) or not 1 <= len(usuario) <= 128

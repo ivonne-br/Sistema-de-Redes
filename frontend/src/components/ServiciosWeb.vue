@@ -1,10 +1,21 @@
-<!-- Recibe resultados DNS/HTTPS de api.js mediante useResumen; muestra últimos intentos, recuentos e historial con fechas y fallos separados de ICMP, sin calcular salud global. -->
+<!-- Recibe resultados DNS/HTTPS de api.js mediante useResumen; presenta evidencia de acceso y detalles desplegables con fechas y fallos, sin calcular salud global. -->
 <script setup>
 import { computed } from 'vue'
 import { consultarWeb } from '../api.js'
 import { useResumen } from '../useResumen.js'
 const { respuesta, error, cargando, recuperada } = useResumen(consultarWeb)
 const datos = computed(() => respuesta.value?.datos)
+const acceso = computed(() => {
+  if (error.value) return 'No podemos comprobarlo ahora: faltan mediciones de la aplicación.'
+  if (cargando.value) return 'Esperando la primera consulta.'
+  if (['sin_contexto', 'esperando_contexto', 'detenido', 'desactivada', 'error'].includes(datos.value?.estado)) return 'No hay comprobación activa disponible; revisa el estado del monitor.'
+  const https = datos.value?.resultados.find(f => f.tipo === 'https')
+  if (!https) return 'Esperando la primera comprobación de acceso a Internet.'
+  if (https.vigencia !== 'vigente') return 'La última comprobación es antigua; falta una medición reciente.'
+  return https.estado === 'correcto'
+    ? 'Sí: esta computadora pudo comunicarse con el sitio de prueba.'
+    : 'No pudimos comunicarnos con el sitio de prueba. No confirma una caída de todo Internet.'
+})
 const historial = computed(() => [...(datos.value?.historial ?? [])].reverse().flatMap(serie =>
   serie.resultados.map(fila => ({ ...fila, clave: `${serie.id_serie}-${fila.tipo}` }))))
 const estados = { esperando_contexto: 'Esperando contexto de red', sin_contexto: 'Contexto no disponible',
@@ -20,13 +31,19 @@ function numero(valor, unidad) { return valor == null ? 'No disponible' : `${val
 </script>
 <template>
   <section aria-labelledby="servicios-web">
-    <h2 id="servicios-web">¿Se resuelven los nombres y responde el servicio HTTPS?</h2>
+    <h2 id="servicios-web">¿Hay acceso a Internet?</h2>
+    <p class="resultado-principal">{{ acceso }}</p>
+    <p>Esto comprueba un sitio de Internet; no garantiza que todas las páginas o aplicaciones funcionen.</p>
+    <p v-if="!error && datos?.resultados.some(f => f.tipo === 'https' && f.vigencia === 'vigente' && f.estado !== 'correcto')">Prueba abrir una página conocida. Si solo falla una aplicación, el problema podría estar en ese servicio. En una red escolar puede hacer falta iniciar sesión en su portal.</p>
+    <p v-for="fila in (datos?.resultados ?? [])" :key="fila.tipo" class="secundario">
+      {{ fila.tipo === 'dns' ? 'Buscar la dirección del sitio' : 'Contactar con el sitio' }} · {{ fecha(fila.fin) }} · {{ error ? 'Sin actualizar' : fila.vigencia === 'vigente' ? 'Reciente' : 'Antiguo' }} · {{ resultados[fila.estado] ?? fila.estado }}
+    </p>
     <div role="status" aria-live="polite">
-      <p v-if="cargando">Cargando comprobaciones DNS/HTTPS…</p>
-      <p v-else-if="error" class="aviso">{{ error }} Se reintentará automáticamente. Los datos conservados y sus edades están congelados; no describen el momento actual.</p>
+      <p v-if="cargando">Cargando comprobaciones de Internet…</p>
+      <details v-else-if="error"><summary>No llegan nuevas mediciones. Ver detalle</summary><p>{{ error }} Se reintentará automáticamente. Los datos conservados y sus edades están congelados; no describen el momento actual.</p></details>
       <p v-else-if="recuperada">Consulta DNS/HTTPS recuperada.</p>
     </div>
-    <template v-if="datos">
+    <details v-if="datos"><summary>Ver resultados, tiempos y evolución DNS/HTTPS</summary>
       <p><strong>{{ estados[datos.estado] ?? datos.estado }}</strong></p>
       <p v-if="datos.detalle">{{ datos.detalle }}</p>
       <p v-if="!datos.resultados.length">Sin comprobaciones conservadas para este contexto.</p>
@@ -69,7 +86,7 @@ function numero(valor, unidad) { return valor == null ? 'No disponible' : `${val
         <p>DNS y HTTPS tienen duraciones distintas y no equivalen al RTT de ping. No hay mediciones continuas entre filas ni un porcentaje de salud. Un cambio de contexto inicia otra ventana visible.</p>
       </details>
       <p v-if="datos.intervalo_s">Una comprobación de cada tipo por ciclo; siguiente ciclo {{ datos.intervalo_s }} segundos después de terminar. Límite por comprobación: {{ datos.limite_s }} segundos. Vigencia: {{ datos.vigencia_s }} segundos.</p>
-    </template>
+    </details>
     <details><summary>Qué comprueban DNS y HTTPS</summary>
       <p>DNS convierte un nombre en direcciones. Usamos la resolución configurada en el Mac: puede responder desde caché o desde otras fuentes del sistema. El tiempo no mide exclusivamente un servidor DNS.</p>
       <p>HTTPS resuelve su destino de forma independiente, establece una conexión segura con certificado válido y recibe las cabeceras. No descarga la página completa. Puede usar IPv4 o IPv6 según el sistema; DNS aquí consulta IPv4.</p>

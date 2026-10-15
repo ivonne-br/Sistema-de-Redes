@@ -1,6 +1,11 @@
-"""Sirve consultas locales de monitores independientes y autorización temporal del router; Host/Origin y claves protegen la salida privada."""
+"""Sirve consultas de monitores y autorización temporal del router.
+
+Entradas: HTTP local validado y credenciales explícitas. Salidas: JSON y cookie
+de sesión HttpOnly opcional para Vue; el monitor conserva permisos y caducidad.
+"""
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.cookies import SimpleCookie, CookieError
 import json
 import logging
 from socketserver import TCPServer
@@ -66,7 +71,7 @@ class _Peticion(BaseHTTPRequestHandler):
         # No registrar rutas, parámetros ni direcciones proporcionadas por clientes.
         pass
 
-    def _json(self, codigo, datos):
+    def _json(self, codigo, datos, *, cookie=None):
         cuerpo = json.dumps(datos, ensure_ascii=False, allow_nan=False).encode('utf-8')
         self.send_response(codigo)
         self.send_header('Content-Type', 'application/json; charset=utf-8')
@@ -74,6 +79,8 @@ class _Peticion(BaseHTTPRequestHandler):
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Connection', 'close')
+        if cookie is not None:
+            self.send_header('Set-Cookie', cookie)
         if codigo == 405:
             self.send_header('Allow', 'GET')
         self.end_headers()
@@ -106,7 +113,30 @@ class _Peticion(BaseHTTPRequestHandler):
 
     def _clave_router(self):
         valores = self.headers.get_all('X-Router-Authorization', [])
-        return valores[0] if len(valores) == 1 and len(valores[0]) <= 128 else None
+        if valores:
+            return valores[0] if len(valores) == 1 and len(valores[0]) <= 128 else None
+        cabeceras = self.headers.get_all('Cookie', [])
+        if len(cabeceras) != 1 or len(cabeceras[0]) > 8192:
+            return None
+        # Rechaza cookies homónimas ambiguas en lugar de elegir la última.
+        if sum(p.strip().split('=', 1)[0] == 'red_router' for p in cabeceras[0].split(';')) != 1:
+            return None
+        try:
+            cookies = SimpleCookie(cabeceras[0])
+            valor = cookies['red_router'].value
+            return valor if len(valor) <= 128 else None
+        except (CookieError, KeyError):
+            return None
+
+    def _cookie_router(self, clave='', *, borrar=False):
+        """Cookie de sesión local: sin contraseña, dominio ni persistencia solicitada.
+
+        HTTP es exclusivo de loopback; Secure deberá añadirse al habilitar HTTPS.
+        La caducidad real permanece en MonitoreoRouter, incluso si el navegador
+        restaura sus cookies de sesión al volver a abrirse.
+        """
+        return (f'red_router={clave}; Path=/api/v1/router; HttpOnly; SameSite=Strict'
+                + ('; Max-Age=0' if borrar else ''))
 
     def do_POST(self):
         if not self._origen_local():
@@ -119,6 +149,7 @@ class _Peticion(BaseHTTPRequestHandler):
             self._error(503, 'router_desactivado', 'El recolector del router no está iniciado.')
             return
         try:
+            modo_cookie = self.headers.get('X-Router-Session') == 'cookie'
             if (self.headers.get('Content-Type') != 'application/json'
                     or self.headers.get('Transfer-Encoding') is not None
                     or len(self.headers.get_all('Content-Length', [])) != 1):
@@ -134,7 +165,10 @@ class _Peticion(BaseHTTPRequestHandler):
         except (ValueError, UnicodeError, OSError, RecursionError):
             self._error(400, 'autorizacion_no_aceptada', 'Comprueba el contexto, la sesión y que no exista otro acceso temporal activo.')
             return
-        self._json(201, {'version_esquema': 1, 'clave': clave})
+        if modo_cookie:
+            self._json(201, {'version_esquema': 1, 'sesion': 'cookie'}, cookie=self._cookie_router(clave))
+        else:
+            self._json(201, {'version_esquema': 1, 'clave': clave})
 
     def do_DELETE(self):
         if not self._origen_local():
@@ -150,7 +184,8 @@ class _Peticion(BaseHTTPRequestHandler):
         except PermissionError:
             self._error(401, 'sin_autorizacion', 'No hay autorización local vigente.')
             return
-        self._json(200, {'version_esquema': 1, 'estado': 'autorizacion_retirada'})
+        self._json(200, {'version_esquema': 1, 'estado': 'autorizacion_retirada'},
+                   cookie=self._cookie_router(borrar=True))
 
     def do_GET(self):
         if not self._origen_local():

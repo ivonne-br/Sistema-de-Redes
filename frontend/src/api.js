@@ -1,4 +1,14 @@
-// Transporte HTTP: recibe señales de cancelación y entrega resúmenes ARP, ICMP o DNS/HTTPS a las vistas, sin calcular métricas.
+// Transporte HTTP: recibe señales de cancelación y entrega estado del servicio y resúmenes ARP, ICMP o DNS/HTTPS a las vistas, sin calcular métricas.
+export async function consultarEstado(signal) {
+  const respuesta = await fetch('/api/v1/estado', { signal, cache: 'no-store' })
+  if (!respuesta.ok) throw new Error(`La API respondió HTTP ${respuesta.status}.`)
+  const cuerpo = await respuesta.json()
+  if (cuerpo.version_esquema !== 1 || typeof cuerpo.monitoreo?.estado !== 'string') {
+    throw new Error('La API devolvió un estado no compatible.')
+  }
+  return cuerpo
+}
+
 export async function consultarResumen(signal) {
   const respuesta = await fetch('/api/v1/arp/resumen', { signal, cache: 'no-store' })
   if (!respuesta.ok) throw new Error(`La API respondió HTTP ${respuesta.status}.`)
