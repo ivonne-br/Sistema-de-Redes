@@ -11,10 +11,15 @@ import { useResumen } from './useResumen.js'
 const { respuesta, error, cargando, recibida, recuperada } = useResumen(consultarEstado)
 const estados = { activo: 'En ejecución', no_iniciado: 'No iniciado', detenido: 'Detenido', error: 'Con error' }
 const catalogo = [
-  { id: 'observaciones', titulo: 'Qué está pasando', ancho: 'completo' },
-  { id: 'internet', titulo: 'Acceso a Internet' },
-  { id: 'respuesta', titulo: 'Tiempo de respuesta' },
-  { id: 'equipos', titulo: 'Equipos y uso de Internet', ancho: 'completo' },
+  { id: 'observaciones', titulo: 'Qué está pasando', ancho: 'completo', pregunta: '¿Qué pasa y qué puedo hacer?', descripcion: 'Reúne las comprobaciones y explica qué puedes revisar, sin asegurar una causa cuando faltan datos.' },
+  { id: 'internet', titulo: 'Acceso a Internet', pregunta: '¿Puedo abrir páginas?', descripcion: 'Comprueba si esta computadora pudo llegar al sitio de prueba. No necesita acceso al router.' },
+  { id: 'respuesta', titulo: 'Tiempo de respuesta', pregunta: '¿Por qué noto esperas?', descripcion: 'Muestra cuánto tardaron los mensajes de prueba. Ayuda a observar esperas; no mide la velocidad de descarga ni confirma su causa.' },
+  { id: 'equipos', titulo: 'Equipos y uso de Internet', ancho: 'completo', pregunta: '¿Qué equipos y uso puedo ver?', descripcion: 'Muestra los equipos y el tráfico que permite consultar el router. Requiere autorizar su lectura; lo que no informe aparecerá como no disponible.' },
+]
+const vistas = [
+  { id: 'conexion', titulo: 'Revisar mi conexión', paneles: ['observaciones', 'internet', 'respuesta'] },
+  { id: 'equipos', titulo: 'Consultar equipos y uso', paneles: ['equipos'] },
+  { id: 'todo', titulo: 'Ver todos los paneles', paneles: catalogo.map(p => p.id) },
 ]
 </script>
 
@@ -46,7 +51,7 @@ const catalogo = [
         <p v-if="respuesta.monitoreo.error">{{ respuesta.monitoreo.error }}</p>
       </details>
     </section>
-    <Paneles :catalogo="catalogo">
+    <Paneles :catalogo="catalogo" :vistas="vistas">
       <template #observaciones><Observaciones /></template>
       <template #internet><ServiciosWeb /></template>
       <template #respuesta><Conectividad /></template>

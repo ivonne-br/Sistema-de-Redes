@@ -4,7 +4,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import Router from '../src/components/Router.vue'
 
 let vista
-afterEach(() => { vista?.unmount(); vi.useRealTimers(); vi.unstubAllGlobals() })
+afterEach(() => { localStorage.clear(); vista?.unmount(); vi.useRealTimers(); vi.unstubAllGlobals() })
 const ok = datos => ({ ok: true, json: async () => datos })
 test('una lectura del backend no concede acceso a una vista sin clave', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => ok({ version_esquema: 1, datos: {
@@ -90,10 +90,11 @@ test('no une tasas nulas ni intervalos largos en la gráfica', async () => {
   const { datos } = await preparar()
   const inicio = Date.now()
   datos.series = [null, 2, 3, 4].map((valor, i) => ({ familia_ip: 'IPv4', interfaz: 'prueba',
-    fecha: new Date(inicio - [40000, 35000, 30000, 0][i]).toISOString(), bajada_mbps: valor, subida_mbps: valor }))
+    antiguedad_s: [45, 40, 35, 5][i], fecha: new Date(inicio - [40000, 35000, 30000, 0][i]).toISOString(), bajada_mbps: valor, subida_mbps: valor }))
   await vi.advanceTimersByTimeAsync(5000)
   expect(vista.findAll('svg line')).toHaveLength(3) // eje y un segmento por dirección
-  expect(vista.text()).toContain('Sin intervalo válido')
+  await vista.findAll('.evolucion select')[2].setValue('tabla')
+  expect(vista.text()).toContain('No disponible')
 })
 
 test('oculta el inventario al alcanzar el límite local aunque la API siga autorizada', async () => {
@@ -136,4 +137,17 @@ test('cerrar una sesión cookie no permite que una consulta tardía restaure la 
   await vi.advanceTimersByTimeAsync(5000)
   expect(vista.text()).not.toContain('Finalizar acceso de lectura')
   expect(vista.text()).toContain('no se confirmó la retirada')
+})
+
+
+test('filtra equipos sin guardar identidades ni hacer consultas nuevas', async () => {
+  const { consulta } = await preparar()
+  const n = consulta.mock.calls.length
+  await vista.get('input[type=search]').setValue('no-coincide')
+  expect(vista.text()).toContain('No hay coincidencias')
+  expect(vista.text()).not.toContain('Equipo de prueba')
+  await vista.get('input[type=search]').setValue('Equipo')
+  expect(vista.text()).toContain('Equipo de prueba')
+  expect(consulta).toHaveBeenCalledTimes(n)
+  expect(JSON.stringify(localStorage)).not.toContain('Equipo')
 })

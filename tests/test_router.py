@@ -68,6 +68,14 @@ class PruebasRouter(unittest.TestCase):
         self.assertNotIn('secreto_sintetico', json.dumps(r))
         self.assertNotIn('token_sintetico', json.dumps(r))
 
+    def test_series_publican_edad_continua_solo_con_autorizacion(self):
+        self.monitor.ciclo()
+        self.t = 42
+        lectura = self.monitor.estado(self.clave)
+        self.assertEqual(lectura['series'][0]['antiguedad_s'], 42)
+        self.assertNotIn('_t', lectura['series'][0])
+        self.assertEqual(self.monitor.estado()['series'], [])
+
     def test_tasas_reset_pausa_y_familias_separadas(self):
         self.monitor.ciclo()
         self.t = 5; self.rx += 10_000_000; self.tx += 1_000_000

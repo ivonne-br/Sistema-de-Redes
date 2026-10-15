@@ -203,7 +203,10 @@ class MonitoreoRouter:
                     copia['vigencia'] = 'vigente' if copia['antiguedad_s'] <= 20 else 'desactualizado'
                     copia['ultimo_intento'] = 'error' if fuente in self._fallos else 'correcto'
                     salida['tablas'][fuente] = copia
-                salida['series'] = [{k: v for k, v in p.items() if k != '_t'} for p in self._series]
+                # Edad continua para representar huecos sin depender del reloj civil del navegador.
+                instante = self._reloj()
+                salida['series'] = [{**{k: v for k, v in p.items() if k != '_t'},
+                                     'antiguedad_s': max(0, instante - p['_t'])} for p in self._series]
             return salida
 
     def _vigente(self, sesion, red):

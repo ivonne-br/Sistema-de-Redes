@@ -12,7 +12,7 @@ const base = () => ({ version_esquema: 1, datos: { estado: 'en_espera', id_conte
   muestras_por_serie: 5, intervalo_s: 30, vigencia_s: 90, destinos: [fila()] } })
 const ok = dato => ({ ok: true, json: async () => structuredClone(dato) })
 let vista
-afterEach(() => { vista?.unmount(); vi.useRealTimers(); vi.unstubAllGlobals() })
+afterEach(() => { localStorage.clear(); vista?.unmount(); vi.useRealTimers(); vi.unstubAllGlobals() })
 
 test('presenta respuestas y RTT cero sin inventar salud ni pérdidas cuando hay errores', async () => {
   vi.useFakeTimers()
@@ -143,4 +143,26 @@ test('presenta recuentos del backend sin sumarlos otra vez y retira incidencias 
   dato.datos.resumen_ventana = []
   await vi.advanceTimersByTimeAsync(5000)
   expect(vista.find('.resumen-icmp').exists()).toBe(false)
+})
+
+
+test('filtra evolución por contexto, cambia medición y oculta gráficas al fallar la consulta', async () => {
+  vi.useFakeTimers()
+  const dato = base()
+  dato.datos.historial = [
+    { id_contexto: 'A', id_serie: 'uno', antiguedad_s: 10, destinos: [fila()] },
+    { id_contexto: 'otra-red', id_serie: 'dos', antiguedad_s: 20, destinos: [fila()] },
+  ]
+  const consulta = vi.fn(async () => ok(dato))
+  vi.stubGlobal('fetch', consulta)
+  vista = mount(Conectividad)
+  await flushPromises()
+  expect(vista.findAll('circle')).toHaveLength(1)
+  await vista.findAll('select')[0].setValue('silencios')
+  await vista.findAll('.evolucion select')[2].setValue('tabla')
+  expect(vista.get('.evolucion tbody').text()).toContain('1 mensajes')
+  expect(consulta).toHaveBeenCalledTimes(1)
+  consulta.mockRejectedValueOnce(new Error('sin servicio'))
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(vista.find('.evolucion').exists()).toBe(false)
 })

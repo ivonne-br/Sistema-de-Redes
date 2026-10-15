@@ -19,7 +19,7 @@ const fuentes = ruta => {
   return base()
 }
 let vista
-afterEach(() => { vista?.unmount(); vi.useRealTimers(); vi.unstubAllGlobals(); window.history.replaceState({}, '', '/') })
+afterEach(() => { vista?.unmount(); vi.useRealTimers(); vi.unstubAllGlobals(); window.history.replaceState({}, '', '/'); localStorage.clear() })
 
 test('integra fuentes públicas y router sin autorizar ni consultar ARP al abrir el resumen', async () => {
   vi.useFakeTimers()
@@ -85,4 +85,26 @@ test('rechaza HTTP fallido, JSON inválido y esquema incompatible', async () => 
   await expect(consultarResumen()).rejects.toThrow('formato no compatible')
   fetchMock.mockResolvedValueOnce(ok({ version_esquema: 1, monitoreo: {} }))
   await expect(consultarEstado()).rejects.toThrow('estado no compatible')
+})
+
+
+test('elegir vistas solo cambia la presentación y nunca autoriza el router', async () => {
+  vi.useFakeTimers()
+  const consulta = vi.fn(async ruta => ok(fuentes(ruta)))
+  vi.stubGlobal('fetch', consulta)
+  vista = mount(App, { attachTo: document.body })
+  await flushPromises()
+  await vista.get('[aria-controls=opciones-paneles]').trigger('click')
+  await vista.findAll('button').find(b => b.text() === 'Consultar equipos y uso').trigger('click')
+  expect(vista.get('[data-panel=internet]').isVisible()).toBe(false)
+  expect(vista.get('[data-panel=equipos]').isVisible()).toBe(true)
+  await vista.get('nav').findAll('button').find(b => b.text() === '¿Puedo abrir páginas?').trigger('click')
+  await flushPromises()
+  expect(vista.get('[data-panel=internet]').isVisible()).toBe(true)
+  expect(consulta).toHaveBeenCalledTimes(5)
+  expect(consulta.mock.calls.every(([, opciones]) => !opciones.method)).toBe(true)
+  expect(localStorage.getItem('red-paneles-v1')).not.toContain('192.168')
+  await vista.findAll('button').find(b => b.text() === 'Revisar mi conexión').trigger('click')
+  expect(vista.get('[data-panel=observaciones]').element.style.display).not.toBe('none')
+  expect(consulta).toHaveBeenCalledTimes(5)
 })

@@ -5,6 +5,7 @@
      nunca en preferencias. Admite la clave en memoria de versiones anteriores. -->
 <script setup>
 import { computed, onUnmounted, ref } from 'vue'
+import Evolucion from './Evolucion.vue'
 import { useResumen } from '../useResumen.js'
 
 const clave = ref(''), cookie = ref(''), csrf = ref(''), confirmado = ref(false)
@@ -45,7 +46,13 @@ const { respuesta, error, cargando } = useResumen(async signal => {
 })
 const datos = computed(() => respuesta.value?.datos)
 const visible = computed(() => !error.value && acceso.value && datos.value?.autorizada && ahora.value < vence.value)
+const buscarEquipo = ref('')
 const inventario = computed(() => visible.value ? datos.value.tablas['dhcp-json'] : null)
+// Filtro local de registros ya autorizados; no se guarda la búsqueda ni la identidad.
+const equiposVisibles = computed(() => {
+  const texto = buscarEquipo.value.trim().toLocaleLowerCase('es')
+  return (inventario.value?.equipos ?? []).filter(e => [e.nombre, e.ipv4, e.mac].some(v => String(v ?? '').toLocaleLowerCase('es').includes(texto)))
+})
 const etapas = { script_lectura: 'leer el script de estadísticas del router',
   validacion_sesion: 'validar la sesión mediante user_data.json', pagina_login: 'abrir la página de acceso', compatibilidad: 'comprobar compatibilidad',
   preparacion_login: 'preparar el acceso', ocupacion: 'comprobar si el router está ocupado',
@@ -108,17 +115,11 @@ const grupos = computed(() => {
     if (!grupos.has(id)) grupos.set(id, [])
     grupos.get(id).push(punto)
   }
-  return Array.from(grupos, ([id, puntos]) => {
-    const maximo = Math.max(1, ...puntos.flatMap(p => [p.bajada_mbps ?? 0, p.subida_mbps ?? 0]))
-    const fin = ahora.value, inicio = fin - 600000
-    const segmentos = campo => puntos.slice(1).flatMap((p, i) => {
-      const a = puntos[i], dt = Date.parse(p.fecha) - Date.parse(a.fecha)
-      if (a[campo] == null || p[campo] == null || dt <= 0 || dt > 20000) return []
-      const x = v => Math.max(0, Math.min(600, (Date.parse(v.fecha) - inicio) / 1000))
-      return [{ x1: x(a), y1: 100 - a[campo] / maximo * 90, x2: x(p), y2: 100 - p[campo] / maximo * 90 }]
-    })
-    return { id, puntos, maximo, bajada: segmentos('bajada_mbps'), subida: segmentos('subida_mbps') }
-  })
+  return Array.from(grupos, ([id, puntos]) => ({ id, puntos,
+    series: [{ id: 'bajada', nombre: 'Bajada: datos que recibes', campo: 'bajada_mbps' },
+             { id: 'subida', nombre: 'Subida: datos que envías', campo: 'subida_mbps' }].map(s => ({
+      id: s.id, nombre: s.nombre, puntos: puntos.map(p => ({ edad: p.antiguedad_s, fecha: p.fecha, valor: p[s.campo] }))
+    })) }))
 })
 </script>
 
@@ -176,22 +177,19 @@ const grupos = computed(() => {
         <p v-if="inventario.ultimo_intento === 'error'">Falló la última lectura DHCP; esta tabla conserva su fecha anterior.</p>
         <p>«Activo» es el estado DHCP del router, no una garantía de presencia instantánea.</p>
         <p id="limite-consumo-dhcp">La tabla DHCP consultada no aporta bytes enviados ni recibidos por dispositivo. «No disponible» no significa consumo cero. Las tasas WAN se muestran por interfaz y no se pueden repartir entre los equipos.</p>
-        <div class="tabla-router"><table aria-describedby="limite-consumo-dhcp"><thead><tr><th>Nombre</th><th>IP</th><th>MAC</th><th>Conexión</th><th>Estado informado</th><th>Consumo</th></tr></thead>
-          <tbody><tr v-for="e in inventario.equipos" :key="`${e.ipv4}-${e.mac}`"><td>{{ e.nombre ?? 'Sin nombre' }}</td><td>{{ e.ipv4 }}</td><td>{{ e.mac }}</td><td>{{ e.conexion_original }}</td><td>{{ e.estado_original ?? `Desconocido (${e.codigo_estado_original})` }}</td><td>No disponible</td></tr></tbody>
+        <label>Buscar equipo por nombre o dirección <input v-model="buscarEquipo" type="search" autocomplete="off" /></label>
+        <p>{{ equiposVisibles.length }} registros coinciden con la búsqueda.</p>
+        <p v-if="!equiposVisibles.length">No hay coincidencias en la tabla recibida. Esto no demuestra que un equipo esté desconectado.</p>
+        <div class="tabla-router" tabindex="0" role="region" aria-label="Equipos informados por el router"><table aria-describedby="limite-consumo-dhcp"><thead><tr><th>Nombre</th><th>IP</th><th>MAC</th><th>Conexión</th><th>Estado informado</th><th>Consumo</th></tr></thead>
+          <tbody><tr v-for="e in equiposVisibles" :key="`${e.ipv4}-${e.mac}`"><td>{{ e.nombre ?? 'Sin nombre' }}</td><td>{{ e.ipv4 }}</td><td>{{ e.mac }}</td><td>{{ e.conexion_original }}</td><td>{{ e.estado_original ?? `Desconocido (${e.codigo_estado_original})` }}</td><td>No disponible</td></tr></tbody>
         </table></div>
       </template>
       <p v-else>Inventario todavía no disponible.</p>
-      <article v-for="g in grupos" :key="g.id">
+      <article v-for="g in grupos" :key="`${datos.id_contexto}-${g.id}`">
         <h3>Tráfico WAN · {{ g.id }}</h3>
         <p>Última muestra: {{ fecha(g.puntos.at(-1).fecha) }}. Bajada: {{ tasa(g.puntos.at(-1).bajada_mbps) }} · Subida: {{ tasa(g.puntos.at(-1).subida_mbps) }}.</p>
-        <p v-if="ahora - Date.parse(g.puntos.at(-1).fecha) > 20000">Muestra desactualizada.</p>
-        <svg viewBox="0 0 600 110" role="img" :aria-label="`Tráfico ${g.id} de los últimos diez minutos; huecos sin intervalos válidos`">
-          <line x1="0" y1="100" x2="600" y2="100" stroke="gray" />
-          <line v-for="(s, i) in g.bajada" :key="`b${i}`" v-bind="s" stroke="#2166ac" stroke-width="2" />
-          <line v-for="(s, i) in g.subida" :key="`s${i}`" v-bind="s" stroke="#a34500" stroke-width="2" />
-        </svg>
-        <p>Hace 10 min → ahora · Escala: 0–{{ g.maximo.toFixed(3) }} Mb/s. Azul: bajada; naranja: subida. Los huecos no representan cero.</p>
-        <details><summary>Valores de la gráfica</summary><div class="tabla-router"><table><thead><tr><th>Fecha</th><th>Bajada</th><th>Subida</th></tr></thead><tbody><tr v-for="(p, i) in g.puntos" :key="i"><td>{{ fecha(p.fecha) }}</td><td>{{ tasa(p.bajada_mbps) }}</td><td>{{ tasa(p.subida_mbps) }}</td></tr></tbody></table></div></details>
+        <p v-if="g.puntos.at(-1).antiguedad_s > 20">Muestra desactualizada.</p>
+        <Evolucion :series="g.series" unidad="Mb/s" :titulo="`Uso observado · ${g.id}`" preferencia="trafico" :hueco="20" />
       </article>
       <p>Sin consumo por dispositivo. Las tasas son promedios entre lecturas, no la capacidad contratada.</p>
     </template>
