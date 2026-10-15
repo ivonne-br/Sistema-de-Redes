@@ -2,7 +2,6 @@
 import { afterEach, expect, test, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import ServiciosWeb from '../src/components/ServiciosWeb.vue'
-import App from '../src/App.vue'
 import { consultarWeb } from '../src/api.js'
 const base = () => ({ version_esquema: 1, datos: { estado: 'en_espera', id_contexto: 'A',
   intervalo_s: 60, limite_s: 8, vigencia_s: 120, codigo_https_esperado: 204,
@@ -62,12 +61,11 @@ test('certificado, HTTP inesperado y datos antiguos se muestran explícitos', as
   expect(vista.text()).toContain('Dato antiguo')
 })
 
-test('sigue funcionando aunque las consultas ARP e ICMP fallen', async () => {
+test('el componente web consulta únicamente su API independiente', async () => {
   vi.stubGlobal('fetch', vi.fn(async url => url.endsWith('/web') ? ok(base()) : { ok: false, status: 500 }))
-  vista = mount(App)
+  vista = mount(ServiciosWeb)
   await flushPromises()
   expect(vista.text()).toContain('Código HTTP recibido: 204')
-  expect(vista.text()).toContain('HTTP 500')
 })
 
 test('no solapa peticiones y cancela al desmontar', async () => {

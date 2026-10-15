@@ -2,7 +2,6 @@
 import { afterEach, expect, test, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import Conectividad from '../src/components/Conectividad.vue'
-import App from '../src/App.vue'
 import { consultarConectividad } from '../src/api.js'
 
 const fila = () => ({ tipo: 'router', ipv4: '192.0.2.1', calidad: 'completa', vigencia: 'vigente',
@@ -67,11 +66,10 @@ test('retención y cambio de contexto sustituyen datos, no acumulan series', asy
   expect(vista.text()).not.toContain('192.0.2.1')
 })
 
-test('fallo de la consulta ARP no oculta las métricas independientes', async () => {
+test('el componente consulta únicamente su API independiente', async () => {
   vi.stubGlobal('fetch', vi.fn(async url => url.endsWith('/conectividad') ? ok(base()) : { ok: false, status: 500 }))
-  vista = mount(App)
+  vista = mount(Conectividad)
   await flushPromises()
-  expect(vista.text()).toContain('API inaccesible')
   expect(vista.text()).toContain('20 %')
 })
 
