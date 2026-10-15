@@ -19,6 +19,7 @@ from backend.eventos import registrar_resultado
 from backend.busqueda import BusquedaLocal
 from backend.conectividad import MonitoreoConectividad
 from backend.web import MonitoreoWeb
+from backend.analisis import analizar_observaciones
 
 _MONITOREO_PROCESO = Lock()
 
@@ -200,7 +201,7 @@ class _Peticion(BaseHTTPRequestHandler):
             identificador = parametros.get('id_contexto', [None])[0]
             if identificador is not None:
                 identificador = str(UUID(identificador))
-            if url.path in ('/api/v1/estado', '/api/v1/conectividad', '/api/v1/web', '/api/v1/router') and parametros:
+            if url.path in ('/api/v1/estado', '/api/v1/conectividad', '/api/v1/web', '/api/v1/router', '/api/v1/observaciones') and parametros:
                 raise ValueError
         except ValueError:
             self._error(400, 'parametros_invalidos', 'Solo se admite id_contexto con un UUID válido en rutas ARP.')
@@ -214,9 +215,12 @@ class _Peticion(BaseHTTPRequestHandler):
         if url.path == '/api/v1/estado':
             self._json(200, {'version_esquema': 1, 'monitoreo': app.estado()})
             return
-        if url.path in ('/api/v1/conectividad', '/api/v1/web'):
+        if url.path in ('/api/v1/conectividad', '/api/v1/web', '/api/v1/observaciones'):
             try:
-                datos = app.estado_web() if url.path == '/api/v1/web' else app.estado_conectividad()
+                if url.path == '/api/v1/observaciones':
+                    datos = analizar_observaciones(app.estado_web(), app.estado_conectividad())
+                else:
+                    datos = app.estado_web() if url.path == '/api/v1/web' else app.estado_conectividad()
             except Exception:
                 app.logger.error('No se pudo construir la consulta de conectividad.')
                 self._error(500, 'error_consulta', 'No se pudo construir la consulta.')

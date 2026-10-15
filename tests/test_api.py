@@ -72,6 +72,30 @@ class PruebasAPI(unittest.TestCase):
         finally:
             conexion.close()
 
+    def test_observaciones_consulta_memoria_y_conserva_protecciones(self):
+        from test_analisis import capturas_recorrido, captura_tiempos
+        with self.servicio() as (app, _, _, _):
+            web, conexion = capturas_recorrido()
+            app.estado_web = Mock(return_value=web)
+            app.estado_conectividad = Mock(return_value=captura_tiempos())
+            codigo, _, respuesta = self.pedir(app, '/api/v1/observaciones')
+            self.assertEqual(codigo, 200)
+            self.assertEqual(respuesta['datos']['comparacion']['estado'], 'comparable')
+            app.estado_web.assert_called_once_with()
+            app.estado_conectividad.assert_called_once_with()
+            self.assertEqual(respuesta['datos']['recorrido']['estado'], 'observado')
+            self.assertEqual(respuesta['datos']['tiempos_respuesta'][0]['reciente']['promedio_ms'], 40)
+            self.assertEqual(respuesta['datos']['principal']['estado'], 'observado')
+            self.assertEqual(len(respuesta['datos']['incidencias']['eventos']), 6)
+            self.assertEqual(respuesta['datos']['nombres']['estado'], 'sin_datos')
+            self.assertEqual(self.pedir(app, '/api/v1/observaciones?otro=1')[0], 400)
+            self.assertEqual(self.pedir(app, '/api/v1/observaciones', headers={'Origin': 'https://externo.test'})[0], 403)
+            self.assertEqual(self.pedir(app, '/api/v1/observaciones', metodo='POST')[0], 405)
+            app.estado_web.side_effect = RuntimeError('contenido privado')
+            codigo, _, respuesta = self.pedir(app, '/api/v1/observaciones')
+            self.assertEqual(codigo, 500)
+            self.assertNotIn('contenido privado', json.dumps(respuesta))
+
     def test_busqueda_inicia_una_vez_consultas_no_reinician_y_cierra(self):
         parada = Event()
         busqueda = Mock()
