@@ -5,11 +5,13 @@ import Router from './components/Router.vue'
 import Conectividad from './components/Conectividad.vue'
 import ServiciosWeb from './components/ServiciosWeb.vue'
 import Paneles from './components/Paneles.vue'
+import Observaciones from './components/Observaciones.vue'
 import { consultarEstado } from './api.js'
 import { useResumen } from './useResumen.js'
 const { respuesta, error, cargando, recibida, recuperada } = useResumen(consultarEstado)
 const estados = { activo: 'En ejecución', no_iniciado: 'No iniciado', detenido: 'Detenido', error: 'Con error' }
 const catalogo = [
+  { id: 'observaciones', titulo: 'Qué está pasando', ancho: 'completo' },
   { id: 'internet', titulo: 'Acceso a Internet' },
   { id: 'respuesta', titulo: 'Tiempo de respuesta' },
   { id: 'equipos', titulo: 'Equipos y uso de Internet', ancho: 'completo' },
@@ -45,6 +47,7 @@ const catalogo = [
       </details>
     </section>
     <Paneles :catalogo="catalogo">
+      <template #observaciones><Observaciones /></template>
       <template #internet><ServiciosWeb /></template>
       <template #respuesta><Conectividad /></template>
       <template #equipos><Router /></template>

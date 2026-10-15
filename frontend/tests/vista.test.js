@@ -10,6 +10,7 @@ const base = () => ({ version_esquema: 1, datos: {
   id_contexto: 'artificial', tablas: {}, series: [],
 } })
 const fuentes = ruta => {
+  if (ruta === '/api/v1/observaciones') return { version_esquema: 1, datos: { estado: 'sin_datos', titulo: 'Esperando resultados', explicacion: 'Faltan comprobaciones', orientacion: 'Espera', limite: 'Solo sitio de prueba', evidencia: [], comparacion: null } }
   if (ruta === '/api/v1/estado') return { version_esquema: 1, monitoreo: { estado: 'activo' } }
   if (ruta === '/api/v1/conectividad') return { version_esquema: 1, datos: { estado: 'midiendo', destinos: [] } }
   if (ruta === '/api/v1/web') return { version_esquema: 1, datos: { estado: 'en_espera', resultados: [
@@ -28,11 +29,11 @@ test('integra fuentes públicas y router sin autorizar ni consultar ARP al abrir
   vista = mount(App)
   await flushPromises()
   await vi.advanceTimersByTimeAsync(5000)
-  expect(vista.findAll('h2').map(n => n.text())).toEqual(['Estado de la aplicación', '¿Hay acceso a Internet?', '¿Cuánto tarda en responder?', 'Dispositivos y tráfico del router'])
-  for (const ruta of ['/api/v1/estado', '/api/v1/web', '/api/v1/conectividad', '/api/v1/router']) {
+  expect(vista.findAll('h2').map(n => n.text())).toEqual(['Estado de la aplicación', 'Qué está pasando y qué puedes hacer', '¿Hay acceso a Internet?', '¿Cuánto tarda en responder?', 'Dispositivos y tráfico del router'])
+  for (const ruta of ['/api/v1/observaciones', '/api/v1/estado', '/api/v1/web', '/api/v1/conectividad', '/api/v1/router']) {
     expect(consulta.mock.calls.filter(([r]) => r === ruta)).toHaveLength(2)
   }
-  expect(consulta.mock.calls).toHaveLength(8)
+  expect(consulta.mock.calls).toHaveLength(10)
   expect(consulta.mock.calls.every(([, opciones]) => !opciones.method && !opciones.headers?.['X-Router-Authorization'])).toBe(true)
   expect(vista.text()).toContain('Sí: esta computadora pudo comunicarse')
   expect(vista.text()).toContain('Hace falta autorizar la lectura')

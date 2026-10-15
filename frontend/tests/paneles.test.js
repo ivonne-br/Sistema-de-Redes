@@ -8,6 +8,14 @@ const catalogo = [{ id: 'a', titulo: 'Internet' }, { id: 'b', titulo: 'Respuesta
 const crear = () => mount(Paneles, { props: { catalogo }, slots: { a: '<p>Medición A</p>', b: '<p>Medición B</p>' } })
 afterEach(() => { vista?.unmount(); localStorage.clear(); vi.restoreAllMocks() })
 
+test('añadir un panel conserva el orden, tamaño y ocultación anteriores', () => {
+  localStorage.setItem('red-paneles-v1', JSON.stringify([{ id: 'b', visible: false, ancho: 'completo' }]))
+  vista = crear()
+  expect(vista.findAll('[data-panel]').map(p => p.attributes('data-panel'))).toEqual(['b', 'a'])
+  expect(vista.get('[data-panel="b"]').element.style.display).toBe('none')
+  expect(vista.get('[data-panel="b"]').classes()).toContain('completo')
+})
+
 test('mueve con botones, cambia ancho, oculta y restaura preferencias sin desmontar los datos', async () => {
   vista = crear()
   await vista.get('button').trigger('click')

@@ -10,11 +10,13 @@ const mensaje = ref(''), editando = ref(false)
 function leer() {
   try {
     const dato = JSON.parse(localStorage.getItem(almacenamiento))
-    if (!Array.isArray(dato) || dato.length !== props.catalogo.length
-      || new Set(dato.map(p => p?.id)).size !== props.catalogo.length
-      || dato.some(p => !props.catalogo.some(c => c.id === p?.id) || typeof p.visible !== 'boolean'
+    if (!Array.isArray(dato)
+      || new Set(dato.map(p => p?.id)).size !== dato.length
+      || dato.some(p => typeof p?.id !== 'string' || typeof p.visible !== 'boolean'
         || !['medio', 'completo'].includes(p.ancho))) return inicial()
-    return dato.map(({ id, visible, ancho }) => ({ id, visible, ancho }))
+    const conservados = dato.filter(p => props.catalogo.some(c => c.id === p.id))
+      .map(({ id, visible, ancho }) => ({ id, visible, ancho }))
+    return [...conservados, ...inicial().filter(p => !conservados.some(c => c.id === p.id))]
   } catch { return inicial() }
 }
 const paneles = ref(leer())
