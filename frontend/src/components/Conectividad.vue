@@ -1,4 +1,4 @@
-<!-- Consulta series ICMP mediante api.js/useResumen; presenta últimas métricas e historial temporal calculados por Python y distingue fallos, datos anteriores y recuperación. -->
+<!-- Consulta series ICMP mediante api.js/useResumen; presenta últimas métricas, recuentos e historial temporal calculados por Python y distingue fallos, datos anteriores y recuperación. -->
 <script setup>
 import { computed } from 'vue'
 import { consultarConectividad } from '../api.js'
@@ -46,6 +46,19 @@ function edad(valor) { return valor == null ? 'No disponible' : `${valor.toFixed
         <p v-if="destino.calidad !== 'completa'" class="aviso">Hay errores u omisiones: el porcentaje no está disponible. Los tiempos corresponden únicamente a las respuestas válidas obtenidas.</p>
         <p v-if="destino.anterior_completa" class="aviso">Última serie completa anterior: {{ fecha(destino.anterior_completa.fin) }}; antigüedad {{ edad(destino.anterior_completa.antiguedad_s) }}. Sin respuesta: {{ numero(destino.anterior_completa.perdida_observada_pct, ' %') }}; RTT promedio: {{ numero(destino.anterior_completa.rtt_ms.promedio, ' ms') }}. Es un dato anterior, no sustituye el resultado del último intento.</p>
       </article>
+      <div class="resumen-icmp" v-if="datos.resumen_ventana?.length">
+        <h3>¿Qué ocurrió en las series conservadas?</h3>
+        <p>Recuentos calculados por Python para este contexto. Se actualizan al llegar series y al expirar la memoria; no representan todo el tiempo transcurrido.</p>
+        <p v-if="error" class="aviso">Resumen conservado sin actualizar mientras la API no responde.</p>
+        <article v-for="grupo in datos.resumen_ventana" :key="`${grupo.tipo}-${grupo.destino}`">
+          <h4>{{ grupo.tipo === 'router' ? 'Router' : 'Externo' }} · {{ grupo.destino ?? 'IPv4 no disponible' }}</h4>
+          <p>{{ grupo.series }} series; {{ grupo.respuestas }} respuestas de {{ grupo.realizadas }} sondas realizadas ({{ grupo.programadas }} programadas).</p>
+          <p>{{ grupo.sin_respuesta }} solicitudes sin respuesta, repartidas en {{ grupo.series_con_silencios }} series. Errores: {{ grupo.errores }}. Omitidas: {{ grupo.omitidas }}. Series con errores u omisiones: {{ grupo.series_con_errores_u_omisiones }}.</p>
+          <p>{{ grupo.series_sin_incidencias }} series con todas las respuestas y sin errores ni omisiones.</p>
+          <p v-if="grupo.respuesta_completa_posterior">Hubo incidencias anteriores y la última serie conservada obtuvo todas sus respuestas. Esto no garantiza que el problema haya desaparecido.</p>
+          <p class="secundario">Finales de serie incluidos: {{ fecha(grupo.primer_fin) }} → {{ fecha(grupo.ultimo_fin) }}. Una misma serie puede tener silencios y errores; esos recuentos no se suman como series distintas.</p>
+        </article>
+      </div>
       <details class="historial-icmp">
         <summary>¿Se repiten las solicitudes sin respuesta? Ver evolución ICMP</summary>
         <p>Series del contexto actual, de la más reciente a la más antigua. Se conservan hasta {{ datos.capacidad_series ?? '—' }} series y {{ datos.retencion_s ?? '—' }} segundos. Reiniciar Python borra esta memoria.</p>

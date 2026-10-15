@@ -1,8 +1,7 @@
-// Simula HTTP y tiempo para verificar métricas independientes de ARP, recuperación, historial, contexto y cancelación de la vista ICMP.
+// Simula HTTP y tiempo para verificar métricas independientes de ARP, recuperación, recuentos, historial y contexto y cancelación de la vista ICMP.
 import { afterEach, expect, test, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import Conectividad from '../src/components/Conectividad.vue'
-import App from '../src/App.vue'
 import { consultarConectividad } from '../src/api.js'
 
 const fila = () => ({ tipo: 'router', ipv4: '192.0.2.1', calidad: 'completa', vigencia: 'vigente',
@@ -67,11 +66,10 @@ test('retención y cambio de contexto sustituyen datos, no acumulan series', asy
   expect(vista.text()).not.toContain('192.0.2.1')
 })
 
-test('fallo de la consulta ARP no oculta las métricas independientes', async () => {
+test('el componente consulta únicamente su API independiente', async () => {
   vi.stubGlobal('fetch', vi.fn(async url => url.endsWith('/conectividad') ? ok(base()) : { ok: false, status: 500 }))
-  vista = mount(App)
+  vista = mount(Conectividad)
   await flushPromises()
-  expect(vista.text()).toContain('API inaccesible')
   expect(vista.text()).toContain('20 %')
 })
 
@@ -121,4 +119,28 @@ test('historial sustituye ventanas sin duplicar; conserva errores y no convierte
   dato.datos.id_contexto = 'B'
   await vi.advanceTimersByTimeAsync(5000)
   expect(historial()).toHaveLength(0)
+})
+
+test('presenta recuentos del backend sin sumarlos otra vez y retira incidencias expiradas', async () => {
+  vi.useFakeTimers()
+  const dato = base()
+  dato.datos.resumen_ventana = [{ tipo: 'router', destino: '192.0.2.1', series: 2,
+    programadas: 10, realizadas: 9, respuestas: 7, sin_respuesta: 1, errores: 1, omitidas: 1,
+    series_con_silencios: 1, series_con_errores_u_omisiones: 1, series_sin_incidencias: 1,
+    respuesta_completa_posterior: true }]
+  const pedir = vi.fn(async () => ok(dato))
+  vi.stubGlobal('fetch', pedir)
+  vista = mount(Conectividad)
+  await flushPromises()
+  expect(vista.get('.resumen-icmp').text()).toContain('7 respuestas de 9 sondas realizadas')
+  expect(vista.get('.resumen-icmp').text()).toContain('Errores: 1. Omitidas: 1')
+  expect(vista.get('.resumen-icmp').text()).toContain('Hubo incidencias anteriores')
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(vista.get('.resumen-icmp').text()).toContain('7 respuestas de 9 sondas realizadas')
+  pedir.mockRejectedValueOnce(new Error('API inaccesible'))
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(vista.get('.resumen-icmp').text()).toContain('Resumen conservado sin actualizar')
+  dato.datos.resumen_ventana = []
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(vista.find('.resumen-icmp').exists()).toBe(false)
 })

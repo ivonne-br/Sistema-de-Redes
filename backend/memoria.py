@@ -1,9 +1,13 @@
-"""Historial acotado de observaciones ARP dentro de un proceso."""
+"""Recibe observaciones ARP y conserva copias acotadas para ConsultaARP.
+
+Entrega historial y edades; el reloj compartido cuenta también el reposo para
+expirar datos. La configuración y un reloj alternativo son entradas inyectables.
+"""
 
 from collections import deque
 from copy import deepcopy
 from threading import Lock
-from time import monotonic
+from backend.reloj import tiempo_continuo
 import math
 
 from backend.configuracion import ConfiguracionMemoria
@@ -30,7 +34,7 @@ def clave_contexto(contexto):
 class MemoriaObservaciones:
     """Guarda copias de observar_arp; expira por tiempo desde su inserción."""
 
-    def __init__(self, configuracion=None, *, reloj=monotonic):
+    def __init__(self, configuracion=None, *, reloj=tiempo_continuo):
         self._configuracion = configuracion if configuracion is not None else ConfiguracionMemoria()
         if not isinstance(self._configuracion, ConfiguracionMemoria):
             raise TypeError("configuracion debe ser una ConfiguracionMemoria.")

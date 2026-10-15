@@ -1,4 +1,4 @@
-"""Recibe configuración y sirve JSON en loopback; administra ARP, búsqueda, ICMP y DNS/HTTPS independientes, sin medir al consultar."""
+"""Sirve consultas locales de monitores independientes y autorización temporal del router; Host/Origin y claves protegen la salida privada."""
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -90,9 +90,9 @@ class _Peticion(BaseHTTPRequestHandler):
     def _solo_lectura(self):
         self._error(405, 'metodo_no_permitido', 'Esta API solo admite GET.')
 
-    do_POST = do_PUT = do_PATCH = do_DELETE = do_OPTIONS = do_HEAD = do_TRACE = do_CONNECT = _solo_lectura
+    do_PUT = do_PATCH = do_OPTIONS = do_HEAD = do_TRACE = do_CONNECT = _solo_lectura
 
-    def do_GET(self):
+    def _origen_local(self):
         puerto = self.server.server_port
         hosts = {f'127.0.0.1:{puerto}', f'localhost:{puerto}'}
         origenes = {f'http://{host}' for host in hosts}
@@ -101,6 +101,59 @@ class _Peticion(BaseHTTPRequestHandler):
                 or (self.headers.get('Origin') is not None and self.headers['Origin'] not in origenes)
                 or self.headers.get('Sec-Fetch-Site') == 'cross-site'):
             self._error(403, 'origen_no_permitido', 'Solo se admiten consultas locales del mismo origen.')
+            return False
+        return True
+
+    def _clave_router(self):
+        valores = self.headers.get_all('X-Router-Authorization', [])
+        return valores[0] if len(valores) == 1 and len(valores[0]) <= 128 else None
+
+    def do_POST(self):
+        if not self._origen_local():
+            return
+        if self.path != '/api/v1/router/sesion':
+            self._solo_lectura()
+            return
+        monitor = self.server.aplicacion.router
+        if monitor is None:
+            self._error(503, 'router_desactivado', 'El recolector del router no está iniciado.')
+            return
+        try:
+            if (self.headers.get('Content-Type') != 'application/json'
+                    or self.headers.get('Transfer-Encoding') is not None
+                    or len(self.headers.get_all('Content-Length', [])) != 1):
+                raise ValueError()
+            longitud = int(self.headers['Content-Length'])
+            if not 0 < longitud <= 8192:
+                raise ValueError()
+            datos = json.loads(self.rfile.read(longitud))
+            if not isinstance(datos, dict) or set(datos) not in ({'cookie', 'csrf', 'id_contexto', 'confirmado'},
+                                                       {'usuario', 'password', 'id_contexto', 'confirmado'}):
+                raise ValueError()
+            clave = monitor.autorizar(datos)
+        except (ValueError, UnicodeError, OSError, RecursionError):
+            self._error(400, 'autorizacion_no_aceptada', 'Comprueba el contexto, la sesión y que no exista otro acceso temporal activo.')
+            return
+        self._json(201, {'version_esquema': 1, 'clave': clave})
+
+    def do_DELETE(self):
+        if not self._origen_local():
+            return
+        if self.path != '/api/v1/router/sesion':
+            self._solo_lectura()
+            return
+        try:
+            monitor = self.server.aplicacion.router
+            if monitor is None:
+                raise PermissionError()
+            monitor.revocar(self._clave_router())
+        except PermissionError:
+            self._error(401, 'sin_autorizacion', 'No hay autorización local vigente.')
+            return
+        self._json(200, {'version_esquema': 1, 'estado': 'autorizacion_retirada'})
+
+    def do_GET(self):
+        if not self._origen_local():
             return
         try:
             url = urlsplit(self.path)
@@ -112,12 +165,17 @@ class _Peticion(BaseHTTPRequestHandler):
             identificador = parametros.get('id_contexto', [None])[0]
             if identificador is not None:
                 identificador = str(UUID(identificador))
-            if url.path in ('/api/v1/estado', '/api/v1/conectividad', '/api/v1/web') and parametros:
+            if url.path in ('/api/v1/estado', '/api/v1/conectividad', '/api/v1/web', '/api/v1/router') and parametros:
                 raise ValueError
         except ValueError:
             self._error(400, 'parametros_invalidos', 'Solo se admite id_contexto con un UUID válido en rutas ARP.')
             return
         app = self.server.aplicacion
+        if url.path == '/api/v1/router':
+            datos = (app.router.estado(self._clave_router()) if app.router else
+                     {'estado': 'desactivado', 'autorizada': False, 'tablas': {}, 'series': []})
+            self._json(200, {'version_esquema': 1, 'datos': datos})
+            return
         if url.path == '/api/v1/estado':
             self._json(200, {'version_esquema': 1, 'monitoreo': app.estado()})
             return
@@ -160,7 +218,7 @@ class APILocal:
     """
 
     def __init__(self, configuracion=None, *, crear_coordinador=CoordinadorARP,
-                 crear_busqueda=BusquedaLocal, crear_conectividad=MonitoreoConectividad, crear_web=MonitoreoWeb, logger=None):
+                 crear_busqueda=BusquedaLocal, crear_conectividad=MonitoreoConectividad, crear_web=MonitoreoWeb, logger=None, router=None):
         self.configuracion = configuracion if configuracion is not None else ConfiguracionBackend()
         if not isinstance(self.configuracion, ConfiguracionBackend):
             raise TypeError('configuracion debe ser una ConfiguracionBackend.')
@@ -172,6 +230,7 @@ class APILocal:
         self._conectividad = None
         self._crear_web = crear_web
         self._web = None
+        self.router = router
         self._parada = Event()
         self.preparada = Event()
         self._lock = Lock()
@@ -199,6 +258,8 @@ class APILocal:
             self._conectividad.detener()
         if self._web is not None:
             self._web.detener()
+        if self.router is not None:
+            self.router.detener()
 
     def estado_web(self):
         """Lee DNS/HTTPS sin enviar nuevas solicitudes ni depender de ARP/ICMP."""
@@ -241,6 +302,7 @@ class APILocal:
         hilo_busqueda = None
         hilo_conectividad = None
         hilo_web = None
+        hilo_router = None
         try:
             if self._usada:
                 raise RuntimeError('Esta instancia de API ya se inició.')
@@ -270,6 +332,9 @@ class APILocal:
                 self._web = self._crear_web(self.configuracion)
                 hilo_web = Thread(target=self._web.ejecutar, name='monitoreo-web')
                 hilo_web.start()
+            if self.router is not None:
+                hilo_router = Thread(target=self.router.ejecutar, name='monitoreo-router')
+                hilo_router.start()
             self.preparada.set()
             if al_iniciar is not None:
                 al_iniciar(self)
@@ -285,6 +350,8 @@ class APILocal:
                 hilo_conectividad.join()
             if hilo_web is not None and hilo_web.ident is not None:
                 hilo_web.join()
+            if hilo_router is not None and hilo_router.ident is not None:
+                hilo_router.join()
             if servidor is not None:
                 servidor.server_close()
             with self._lock:

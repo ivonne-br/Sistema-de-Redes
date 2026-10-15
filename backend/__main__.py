@@ -18,11 +18,14 @@ from backend.descubrimiento import observar_arp, observar_tabla_arp
 from backend.arp_macos import consultar_arp_sistema
 from backend.coordinador import CoordinadorARP
 from backend.api import APILocal
+from backend.router_texto import interpretar_texto_router, LIMITE_TEXTO
+from backend.router_json import interpretar_json_router, FUENTES
+from backend.router import MonitoreoRouter
 
 
 def ejecutar_api(configuracion, logger):
     """Conecta señales del CLI al cierre de la API y su único monitoreo."""
-    api = APILocal(configuracion, logger=logger)
+    api = APILocal(configuracion, logger=logger, router=MonitoreoRouter())
     anteriores = {}
     try:
         for senal in (signal.SIGINT, signal.SIGTERM):
@@ -89,6 +92,12 @@ def main():
         help="Archivo JSON de configuración; colocar antes del subcomando.",
     )
     subcomandos = parser.add_subparsers(dest="comando")
+    router = subcomandos.add_parser(
+        "interpretar-router", help="Interpretar una copia manual DHCP/WAN; no consulta el router ni publica datos en la API.")
+    router.add_argument("--desde-stdin", action="store_true", required=True,
+                        help="Recibir el texto del panel por archivo redirigido o tubería.")
+    router.add_argument('--formato', choices=['texto', *FUENTES], default='texto',
+                        help='Formato y tabla de la copia; JSON admite una sola respuesta por ejecución.')
     api = subcomandos.add_parser("servir-api", help="Iniciar API de lectura en 127.0.0.1 y un único monitoreo ARP; Ctrl+C para cerrar.")
     api.add_argument("--puerto", type=int, help="Puerto local (8000 por defecto; 0 elige uno libre).")
     api.add_argument("--sin-busqueda-activa", action="store_true",
@@ -160,7 +169,19 @@ def main():
         parser.error(str(error))
     logger = configurar_logging(configuracion.nivel_log)
 
-    if argumentos.comando == "servir-api":
+    if argumentos.comando == "interpretar-router":
+        if sys.stdin.isatty():
+            parser.error("--desde-stdin requiere una tubería o un archivo redirigido.")
+        try:
+            texto = sys.stdin.read(LIMITE_TEXTO + 1)
+            resultado = (interpretar_texto_router(texto) if argumentos.formato == 'texto'
+                         else interpretar_json_router(texto, argumentos.formato))
+        except (ValueError, UnicodeError):
+            parser.error("Entrada no válida, ambigua o demasiado grande; utiliza UTF-8 y el formato seleccionado.")
+        print(json.dumps(resultado, indent=2, ensure_ascii=False, allow_nan=False))
+        if resultado['estado'] != 'lectura_correcta':
+            raise SystemExit(1)
+    elif argumentos.comando == "servir-api":
         ejecutar_api(configuracion, logger)
     elif argumentos.comando == "monitorear-arp":
         ejecutar_monitoreo(configuracion, argumentos.ciclos, logger)

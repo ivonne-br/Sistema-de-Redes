@@ -1,6 +1,6 @@
 """Comprueba resolución de nombres y HTTPS, sin ARP ni cambios en el DNS del Mac.
 
-Entradas: configuración y contexto IPv4; salidas: últimas comprobaciones e historial temporal para la
+Entradas: configuración y contexto IPv4; salidas: últimas comprobaciones, historial y recuentos temporales para la
 API. Las operaciones de red se aíslan en procesos acotados para limitar también
 getaddrinfo. Este módulo sirve como trabajador con `python -m backend.web`.
 """
@@ -17,7 +17,7 @@ import ssl
 import subprocess
 import sys
 from threading import Event, Lock
-from time import monotonic
+from backend.reloj import tiempo_continuo
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -33,7 +33,7 @@ def comprobar(tipo, destino, limite, codigo=204):
     Solo recibe cabeceras HTTPS, no descarga el cuerpo. La duración comprende toda
     la operación, incluida su resolución; no es RTT ni latencia de un servidor DNS.
     """
-    inicio = monotonic()
+    inicio = tiempo_continuo()
     resultado = {'estado': 'error_medicion', 'direcciones': [], 'codigo_http': None}
     try:
         if tipo == 'dns':
@@ -66,7 +66,7 @@ def comprobar(tipo, destino, limite, codigo=204):
         resultado['estado'] = 'tiempo_agotado'
     except (OSError, HTTPException):
         resultado['estado'] = 'error_conexion'
-    resultado['duracion_ms'] = round((monotonic() - inicio) * 1000, 3)
+    resultado['duracion_ms'] = round((tiempo_continuo() - inicio) * 1000, 3)
     return resultado
 
 
@@ -88,11 +88,33 @@ def ejecutar_comprobacion(tipo, destino, limite, codigo=204):
     return {'estado': estado, 'duracion_ms': None, 'codigo_http': None, 'direcciones': []}
 
 
+def resumir_ventana(historial):
+    """Cuenta cada tipo y destino de la ventana; conserva estados de fallo separados."""
+    grupos = {}
+    for serie in historial:
+        for fila in serie['resultados']:
+            clave = (fila['tipo'], fila['destino'])
+            grupo = grupos.setdefault(clave, {
+                'tipo': fila['tipo'], 'destino': fila['destino'], 'intentos': 0,
+                'correctos': 0, 'no_correctos': 0, 'por_estado': {},
+                'primer_fin': fila['fin'], 'ultimo_fin': None, 'ultimo_estado': None,
+            })
+            estado = fila['estado']
+            grupo['intentos'] += 1
+            grupo['correctos'] += int(estado == 'correcto')
+            grupo['no_correctos'] += int(estado != 'correcto')
+            grupo['por_estado'][estado] = grupo['por_estado'].get(estado, 0) + 1
+            grupo['ultimo_fin'], grupo['ultimo_estado'] = fila['fin'], estado
+    for grupo in grupos.values():
+        grupo['correcto_posterior'] = grupo['ultimo_estado'] == 'correcto' and grupo['no_correctos'] > 0
+    return list(grupos.values())
+
+
 class MonitoreoWeb:
     """Un par DNS/HTTPS por ciclo, con historial limitado por capacidad y retención."""
 
     def __init__(self, configuracion=None, *, consultar_contexto=consultar_contexto_ipv4,
-                 sonda=ejecutar_comprobacion, reloj=monotonic):
+                 sonda=ejecutar_comprobacion, reloj=tiempo_continuo):
         self.config = configuracion or ConfiguracionBackend()
         self._contexto, self._sonda, self._reloj = consultar_contexto, sonda, reloj
         self._parada, self._lock, self._ciclo_lock = Event(), Lock(), Lock()
@@ -185,7 +207,8 @@ class MonitoreoWeb:
             serie['resultados'] = presentar(serie['resultados'])
             if serie['resultados']:
                 ventana.append(serie)
-        return {**dato, 'historial': ventana, 'series_conservadas': len(ventana),
+        return {**dato, 'historial': ventana, 'resumen_ventana': resumir_ventana(ventana),
+                'series_conservadas': len(ventana),
                 'capacidad_series': self.config.memoria.capacidad, 'retencion_s': self.config.memoria.retencion_s,
                 'intervalo_s': self.config.intervalo_web_s, 'limite_s': self.config.limite_web_s,
                 'vigencia_s': 120, 'codigo_https_esperado': self.config.codigo_https_esperado}

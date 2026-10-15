@@ -1,7 +1,7 @@
 """Mide series ICMP hacia gateway y IPv4 externas, sin consultar ni depender de ARP.
 
 Entradas: configuración, contexto IPv4 y sonda inyectables. Salida: copias de la
-última serie e historial por destino, métricas y antigüedad para la API. Conserva hasta la
+última serie, historial y recuentos por destino, con antigüedad para la API. Conserva hasta la
 capacidad/retención configuradas; los tramos de red tienen UUID propios.
 """
 
@@ -11,7 +11,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import math
 from threading import Event, Lock
-from time import monotonic
+from backend.reloj import tiempo_continuo
 from uuid import uuid4
 
 from backend.configuracion import ConfiguracionBackend
@@ -46,11 +46,45 @@ def resumir_serie(muestras, programadas):
     }
 
 
+def resumir_ventana(historial):
+    """Cuenta la ventana ya filtrada por contexto/retención, sin inferir causas.
+
+    Una serie sin incidencias exige todas las respuestas programadas y ningún
+    error u omisión. Los recuentos no son continuidad temporal ni salud global.
+    """
+    grupos = {}
+    for serie in historial:
+        for fila in serie['destinos']:
+            clave = (fila['tipo'], fila['ipv4'])
+            grupo = grupos.setdefault(clave, {
+                'tipo': fila['tipo'], 'destino': fila['ipv4'], 'series': 0,
+                'programadas': 0, 'realizadas': 0, 'respuestas': 0,
+                'sin_respuesta': 0, 'errores': 0, 'omitidas': 0,
+                'series_con_silencios': 0, 'series_con_errores_u_omisiones': 0,
+                'series_sin_incidencias': 0, 'primer_fin': fila['fin'],
+                'ultimo_fin': None, 'ultima_sin_incidencias': False,
+            })
+            grupo['series'] += 1
+            for campo in ('programadas', 'realizadas', 'respuestas', 'sin_respuesta', 'errores', 'omitidas'):
+                grupo[campo] += fila[campo]
+            grupo['series_con_silencios'] += int(fila['sin_respuesta'] > 0)
+            grupo['series_con_errores_u_omisiones'] += int(fila['errores'] + fila['omitidas'] > 0)
+            completa = (fila['programadas'] > 0 and fila['respuestas'] == fila['programadas']
+                        and fila['sin_respuesta'] == fila['errores'] == fila['omitidas'] == 0)
+            grupo['series_sin_incidencias'] += int(completa)
+            grupo['ultima_sin_incidencias'] = completa
+            grupo['ultimo_fin'] = fila['fin']
+    for grupo in grupos.values():
+        grupo['respuesta_completa_posterior'] = (grupo['ultima_sin_incidencias']
+            and grupo['series_sin_incidencias'] < grupo['series'])
+    return list(grupos.values())
+
+
 class MonitoreoConectividad:
     """Un ciclo a la vez; destinos en paralelo y una sonda por destino en cada ronda."""
 
     def __init__(self, configuracion=None, *, consultar_contexto=consultar_contexto_ipv4,
-                 sonda=ejecutar_sonda, reloj=monotonic, esperar=None):
+                 sonda=ejecutar_sonda, reloj=tiempo_continuo, esperar=None):
         self.config = configuracion if configuracion is not None else ConfiguracionBackend()
         self._contexto = consultar_contexto
         self._sonda = sonda
@@ -186,7 +220,8 @@ class MonitoreoConectividad:
                             fila['anterior_completa'] = anterior
                             break
                 filas.append(fila)
-        return {**meta, 'destinos': filas, 'historial': ventana, 'series_conservadas': len(historial),
+        return {**meta, 'destinos': filas, 'historial': ventana, 'resumen_ventana': resumir_ventana(ventana),
+                'series_conservadas': len(historial),
                 'capacidad_series': self.config.memoria.capacidad,
                 'intervalo_s': self.config.intervalo_conectividad_s, 'muestras_por_serie': self.config.muestras_conectividad,
                 'vigencia_s': 90, 'retencion_s': self.config.memoria.retencion_s,
