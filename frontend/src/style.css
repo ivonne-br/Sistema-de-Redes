@@ -50,3 +50,24 @@ pre { overflow-x: auto; background: #edf3f5; padding: 12px; }
 section, [id] { scroll-margin-top: 16px; }
 @media (max-width: 850px) { .paneles-conexion { grid-template-columns: 1fr; } }
 @media (max-width: 600px) { main { padding: 18px 12px; } section { padding: 18px 14px; } }
+
+/* Tamaños de panel elegidos por la persona; el contenido sigue accesible con teclado. */
+.accesos-paneles { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+.ayuda-panel { display: block; margin-left: 24px; }
+.opciones-paneles fieldset { margin: 12px 0; border: 1px solid #cbd9de; }
+.opciones-paneles fieldset button { margin: 4px; }
+.contenido-panel { min-width: 0; scroll-margin-top: 16px; }
+.contenido-panel.alto-compacto { max-height: 24rem; overflow: auto; }
+.contenido-panel.alto-amplio { max-height: 40rem; overflow: auto; }
+@media (max-width: 600px) {
+  .contenido-panel.alto-compacto, .contenido-panel.alto-amplio { max-height: none; overflow: visible; }
+  .controles-panel label, .controles-panel select { max-width: 100%; }
+}
+
+/* Gráficas compartidas: filtros con etiqueta, escala legible y tabla alternativa. */
+.filtros-grafica { display: flex; flex-wrap: wrap; gap: 12px; }
+.filtros-grafica label { display: flex; flex-direction: column; max-width: 100%; }
+.filtros-grafica select { max-width: 100%; }
+.evolucion svg { display: block; width: 100%; min-height: 160px; }
+.evolucion svg text { fill: #172c37; font-size: 13px; }
+.evolucion { min-width: 0; }

@@ -1,13 +1,22 @@
 <!-- Consulta series ICMP mediante api.js/useResumen; resume respuestas y RTT, con métricas e historial desplegables calculados por Python y fallos separados. -->
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import Evolucion from './Evolucion.vue'
 import { consultarConectividad } from '../api.js'
 import { useResumen } from '../useResumen.js'
 
 const { respuesta, error, cargando, recuperada } = useResumen(consultarConectividad)
+const medida = ref('tiempo')
 const datos = computed(() => respuesta.value?.datos)
 const historial = computed(() => [...(datos.value?.historial ?? [])].reverse().flatMap(serie =>
   serie.destinos.map(fila => ({ ...fila, clave: `${serie.id_serie}-${fila.tipo}-${fila.ipv4}` }))))
+// Solo la ventana del contexto actual; un intento sin RTT mantiene un hueco.
+const evolucion = computed(() => (datos.value?.destinos ?? []).filter(d => d.ipv4).map(d => ({
+  id: `${d.tipo}-${d.ipv4}`, nombre: `${d.tipo === 'router' ? 'Dentro de tu red' : 'Hacia Internet'} · ${d.ipv4}`,
+  puntos: (datos.value?.historial ?? []).filter(s => s.id_contexto === datos.value.id_contexto).flatMap(s =>
+    s.destinos.filter(f => f.tipo === d.tipo && f.ipv4 === d.ipv4).map(f => ({ edad: s.antiguedad_s,
+      fecha: f.fin, valor: medida.value === 'tiempo' ? f.rtt_ms?.promedio ?? null : f.sin_respuesta ?? null })))
+})))
 const estados = { esperando_contexto: 'Esperando contexto de red', sin_contexto: 'Contexto de red no disponible',
   midiendo: 'Medición en curso', en_espera: 'Esperando la siguiente serie', detenido: 'Medición detenida',
   desactivada: 'Medición desactivada', error: 'Fallo del monitor' }
@@ -38,6 +47,12 @@ function edad(valor) { return valor == null ? 'No disponible' : `${valor.toFixed
       <details v-else-if="error"><summary>No llegan nuevas mediciones. Ver detalle</summary><p>{{ error }} Se reintentará automáticamente. Los resultados conservados y sus antigüedades están congelados; no describen el momento actual.</p></details>
       <p v-else-if="recuperada">Consulta de conectividad recuperada.</p>
     </div>
+    <template v-if="datos && !error">
+      <p v-if="datos.destinos.some(d => d.vigencia !== 'vigente')">La gráfica contiene mediciones anteriores: no describe necesariamente este momento.</p>
+      <label>Medición que quieres revisar <select v-model="medida"><option value="tiempo">Tiempo de respuesta</option><option value="silencios">Mensajes sin respuesta</option></select></label>
+      <p v-if="medida === 'silencios'">Cuenta los mensajes que no recibieron respuesta en cada grupo de pruebas. No equivale a minutos sin Internet ni demuestra una desconexión.</p>
+      <Evolucion :key="datos.id_contexto" :series="evolucion" :unidad="medida === 'tiempo' ? 'ms' : 'mensajes'" :titulo="medida === 'tiempo' ? 'Cómo cambia el tiempo de respuesta' : 'Mensajes sin respuesta en cada prueba'" preferencia="respuesta" :hueco="Math.min(90, (datos.intervalo_s ?? 30) + (datos.muestras_por_serie ?? 5) * 2 + 10)" />
+    </template>
     <details v-if="datos"><summary>Ver sondas, errores y evolución ICMP</summary>
       <p>Comparamos el recorrido local hasta el router con el recorrido hasta <code>1.1.1.1</code> en Internet mediante ping (ICMP). No es una prueba de velocidad del Wi-Fi.</p>
       <p><strong>{{ estados[datos.estado] ?? datos.estado }}</strong><span v-if="datos.estado === 'midiendo'"> · {{ datos.rondas_completadas }} de {{ datos.muestras_por_serie }} rondas terminadas</span></p>
