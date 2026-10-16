@@ -1,4 +1,16 @@
-// Transporte HTTP: recibe señales de cancelación y entrega estado del servicio y resúmenes y observaciones de ARP, ICMP o DNS/HTTPS a las vistas, sin calcular métricas.
+// Transporte HTTP: recibe señales y confirmación de cierre; entrega estado,
+// observaciones y solicitudes a la API local, sin calcular métricas ni modificar el router.
+export async function solicitarCierre(idEjecucion, signal) {
+  const respuesta = await fetch('/api/v1/cierre', {
+    method: 'POST', signal, headers: { 'Content-Type': 'application/json', 'X-Red-Accion': 'cerrar-aplicacion' },
+    body: JSON.stringify({ confirmado: true, id_ejecucion: idEjecucion }),
+  })
+  const cuerpo = await respuesta.json()
+  if (respuesta.status !== 202 || cuerpo.version_esquema !== 1 || cuerpo.estado !== 'cierre_solicitado') {
+    throw new Error(cuerpo.error?.detalle ?? 'El servicio no confirmó la solicitud de cierre.')
+  }
+}
+
 export async function consultarObservaciones(signal) {
   const respuesta = await fetch('/api/v1/observaciones', { signal, cache: 'no-store' })
   if (!respuesta.ok) throw new Error(`No se pudieron consultar las observaciones (HTTP ${respuesta.status}).`)

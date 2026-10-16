@@ -1,4 +1,5 @@
-// Estado de la pantalla: consulta secuencialmente la API y cancela temporizadores/HTTP al desmontar.
+// Recibe una consulta HTTP y publica su estado; detener() cancela consultas al cerrar
+// la aplicación o desmontar las vistas, sin iniciar recolección en el backend.
 import { onMounted, onUnmounted, ref } from 'vue'
 import { consultarResumen } from './api.js'
 
@@ -37,7 +38,13 @@ export function useResumen(consultar = consultarResumen, intervalo = 5000) {
       }
     }
   }
+  function detener() {
+    activo = false
+    clearTimeout(temporizador)
+    clearTimeout(limite)
+    controlador?.abort()
+  }
   onMounted(() => { activo = true; actualizar() })
-  onUnmounted(() => { activo = false; clearTimeout(temporizador); clearTimeout(limite); controlador?.abort() })
-  return { respuesta, error, cargando, recuperada, recibida }
+  onUnmounted(detener)
+  return { respuesta, error, cargando, recuperada, recibida, detener }
 }

@@ -200,7 +200,6 @@ Los siguientes ejemplos son sintéticos y sirven para verificar la implementaci�
 | Incremento de 1 000 000 bytes en 5 s | Volumen de 1 MB y tasa de 1.6 Mbps para esa entidad y dirección. |
 | Contador menor que en la lectura anterior sin explicación validada | Intervalo inválido y nueva referencia de contador. |
 
-
 ## 9. Reglas del panel de observaciones
 
 El análisis público utiliza las capturas en memoria de los monitores web y de
@@ -229,7 +228,6 @@ Las recomendaciones son pasos manuales de comprobación. No cambian DNS, Wi-Fi,
 router ni permisos. Relacionar consumo con problemas requiere evidencia de tráfico
 autorizada, periodos compatibles y reglas adicionales; estas observaciones públicas
 no identifican qué dispositivo consume más ni causan operaciones administrativas.
-
 
 ## 10. Cantidades observadas en conexiones del router
 

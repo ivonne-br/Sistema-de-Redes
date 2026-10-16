@@ -1,13 +1,17 @@
 """Sirve consultas de monitores y autorización temporal del router.
 
-Entradas: HTTP local validado y credenciales explícitas. Salidas: JSON y cookie
-de sesión HttpOnly opcional para Vue; el monitor conserva permisos y caducidad.
+Entradas: HTTP local validado, dashboard compilado opcional y credenciales explícitas.
+Salidas: JSON, archivos públicos de Vue y cookie HttpOnly; inicio verifica identidad
+y disponibilidad sin consultar la red. El cierre confirmado solo llama al iniciador
+propietario; el monitor conserva permisos y caducidad del router por separado.
 """
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from http.cookies import SimpleCookie, CookieError
 import json
 import logging
+import mimetypes
+from pathlib import Path
 from socketserver import TCPServer
 from threading import BoundedSemaphore, Event, Lock, Thread
 from urllib.parse import parse_qs, urlsplit
@@ -20,6 +24,7 @@ from backend.busqueda import BusquedaLocal
 from backend.conectividad import MonitoreoConectividad
 from backend.web import MonitoreoWeb
 from backend.diagnostico import diagnosticar_conexion, diagnosticar_trafico
+from backend.inicio import APLICACION, identidad, dashboard_valido
 
 _MONITOREO_PROCESO = Lock()
 
@@ -142,6 +147,9 @@ class _Peticion(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._origen_local():
             return
+        if self.path == '/api/v1/cierre':
+            self._cerrar_aplicacion()
+            return
         if self.path != '/api/v1/router/sesion':
             self._solo_lectura()
             return
@@ -171,6 +179,35 @@ class _Peticion(BaseHTTPRequestHandler):
         else:
             self._json(201, {'version_esquema': 1, 'clave': clave})
 
+    def _cerrar_aplicacion(self):
+        """Valida confirmación y ejecución; solo el iniciador puede habilitar el cierre."""
+        app = self.server.aplicacion
+        if app.solicitar_cierre is None:
+            self._error(403, 'cierre_no_disponible', 'Este servicio se inició por separado; ciérralo desde su ventana original.')
+            return
+        try:
+            if (self.headers.get('Origin') is None
+                    or self.headers.get('Content-Type') != 'application/json'
+                    or self.headers.get_all('X-Red-Accion', []) != ['cerrar-aplicacion']
+                    or self.headers.get('Transfer-Encoding') is not None
+                    or len(self.headers.get_all('Content-Length', [])) != 1):
+                raise ValueError()
+            longitud = int(self.headers['Content-Length'])
+            if not 0 < longitud <= 256:
+                raise ValueError()
+            datos = json.loads(self.rfile.read(longitud))
+            if (not isinstance(datos, dict) or set(datos) != {'confirmado', 'id_ejecucion'}
+                    or datos['confirmado'] is not True):
+                raise ValueError()
+        except (ValueError, OSError, UnicodeError, RecursionError):
+            self._error(400, 'confirmacion_invalida', 'Confirma el cierre desde la pantalla de la aplicación.')
+            return
+        if datos['id_ejecucion'] != app.estado()['id_ejecucion']:
+            self._error(409, 'ejecucion_distinta', 'La aplicación se reinició. Actualiza la página antes de confirmar el cierre.')
+            return
+        self._json(202, {'version_esquema': 1, 'estado': 'cierre_solicitado'})
+        app.solicitar_cierre()
+
     def do_DELETE(self):
         if not self._origen_local():
             return
@@ -190,6 +227,15 @@ class _Peticion(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if not self._origen_local():
+            return
+        if self.path == '/api/v1/inicio':
+            app = self.server.aplicacion
+            self._json(200, {'aplicacion': APLICACION, 'version_inicio': 1,
+                             'instalacion': identidad(), 'monitoreo': app.estado(),
+                             'dashboard': app.dashboard is not None and dashboard_valido(app.dashboard)})
+            return
+        if self.path == '/' or self.path.startswith('/assets/'):
+            self._dashboard()
             return
         try:
             url = urlsplit(self.path)
@@ -220,7 +266,8 @@ class _Peticion(BaseHTTPRequestHandler):
             self._json(200, {'version_esquema': 1, 'datos': datos})
             return
         if url.path == '/api/v1/estado':
-            self._json(200, {'version_esquema': 1, 'monitoreo': app.estado()})
+            self._json(200, {'version_esquema': 1, 'monitoreo': app.estado(),
+                             'cierre_disponible': app.solicitar_cierre is not None})
             return
         if url.path in ('/api/v1/conectividad', '/api/v1/web', '/api/v1/observaciones'):
             try:
@@ -254,6 +301,33 @@ class _Peticion(BaseHTTPRequestHandler):
             datos['busqueda_activa'] = app.estado_busqueda(calidad['id_contexto'])
         self._json(200, {'version_esquema': 1, 'monitoreo': app.estado(), 'datos': datos})
 
+    def _dashboard(self):
+        """Sirve solo index y assets compilados; jamás el repositorio ni rutas fuera de dist."""
+        directorio = self.server.aplicacion.dashboard
+        if directorio is None:
+            self._error(404, 'dashboard_no_preparado', 'El dashboard no está preparado.')
+            return
+        ruta = directorio / ('index.html' if self.path == '/' else self.path.lstrip('/'))
+        try:
+            ruta = ruta.resolve()
+            if not ruta.is_relative_to(directorio) or not ruta.is_file() or ruta.suffix not in {
+                    '.html', '.js', '.css', '.svg', '.png', '.jpg', '.jpeg', '.webp', '.ico', '.woff', '.woff2'}:
+                raise OSError()
+            cuerpo = ruta.read_bytes()
+        except OSError:
+            self._error(404, 'archivo_no_disponible', 'No se encontró ese archivo del dashboard.')
+            return
+        tipo = mimetypes.guess_type(ruta.name)[0] or 'application/octet-stream'
+        self.send_response(200)
+        self.send_header('Content-Type', tipo)
+        self.send_header('Content-Length', str(len(cuerpo)))
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('Connection', 'close')
+        self.end_headers()
+        self.close_connection = True
+        self.wfile.write(cuerpo)
+
 
 class APILocal:
     """Posee un servidor, un coordinador y una memoria durante una ejecución.
@@ -264,7 +338,7 @@ class APILocal:
     """
 
     def __init__(self, configuracion=None, *, crear_coordinador=CoordinadorARP,
-                 crear_busqueda=BusquedaLocal, crear_conectividad=MonitoreoConectividad, crear_web=MonitoreoWeb, logger=None, router=None):
+                 crear_busqueda=BusquedaLocal, crear_conectividad=MonitoreoConectividad, crear_web=MonitoreoWeb, logger=None, router=None, dashboard=None):
         self.configuracion = configuracion if configuracion is not None else ConfiguracionBackend()
         if not isinstance(self.configuracion, ConfiguracionBackend):
             raise TypeError('configuracion debe ser una ConfiguracionBackend.')
@@ -277,6 +351,8 @@ class APILocal:
         self._crear_web = crear_web
         self._web = None
         self.router = router
+        self.dashboard = Path(dashboard).resolve() if dashboard is not None else None
+        self.solicitar_cierre = None  # El CLI no concede propiedad al navegador.
         self._parada = Event()
         self.preparada = Event()
         self._lock = Lock()
