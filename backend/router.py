@@ -235,6 +235,7 @@ class MonitoreoRouter:
                       'autorizada': permitido, 'tablas': {}, 'series': [], 'resumen_trafico': [], 'trafico_por_periodo': {},
                       'intervalo_s': 5, 'retencion_s': 600}
             if permitido:
+                salida['contexto'] = deepcopy(self._red)
                 salida['restante_s'] = max(0, self._sesion['vence'] - self._reloj())
                 for fuente, tabla in self._tablas.items():
                     copia = deepcopy(tabla)

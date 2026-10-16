@@ -72,6 +72,31 @@ class PruebasAPI(unittest.TestCase):
         finally:
             conexion.close()
 
+    def test_diagnostico_privado_no_aparece_en_consulta_publica(self):
+        from test_diagnostico import escenario
+        from copy import deepcopy
+        router, conexion, web = escenario()
+        with self.servicio() as (app, _, _, _):
+            app.estado_web = Mock(return_value=web)
+            app.estado_conectividad = Mock(return_value=conexion)
+            app.router = Mock()
+            app.router.estado.side_effect = lambda clave: deepcopy(router) if clave == 'prueba' else {'autorizada': False, 'tablas': {}, 'series': []}
+            codigo, _, dato = self.pedir(app, '/api/v1/router')
+            self.assertEqual(codigo, 200)
+            self.assertNotIn('diagnostico', dato['datos'])
+            app.estado_web.assert_not_called()
+            codigo, _, dato = self.pedir(app, '/api/v1/router', headers={'X-Router-Authorization': 'prueba'})
+            self.assertEqual(dato['datos']['diagnostico']['estado'], 'comparable')
+            codigo, _, dato = self.pedir(app, '/api/v1/observaciones')
+            self.assertIn('diagnostico', dato['datos'])
+            self.assertNotIn('comparaciones', dato['datos']['diagnostico'])
+            self.assertNotIn('bytes_recibidos', json.dumps(dato))
+            self.assertEqual(self.pedir(app, '/api/v1/router', headers={'Origin': 'https://externo.test'})[0], 403)
+            app.estado_web.side_effect = RuntimeError('secreto')
+            codigo, _, dato = self.pedir(app, '/api/v1/router', headers={'X-Router-Authorization': 'prueba'})
+            self.assertEqual(codigo, 500)
+            self.assertNotIn('secreto', json.dumps(dato))
+
     def test_observaciones_consulta_memoria_y_conserva_protecciones(self):
         from test_analisis import capturas_recorrido, captura_tiempos
         with self.servicio() as (app, _, _, _):
