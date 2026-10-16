@@ -19,7 +19,7 @@ from backend.eventos import registrar_resultado
 from backend.busqueda import BusquedaLocal
 from backend.conectividad import MonitoreoConectividad
 from backend.web import MonitoreoWeb
-from backend.analisis import analizar_observaciones
+from backend.diagnostico import diagnosticar_conexion, diagnosticar_trafico
 
 _MONITOREO_PROCESO = Lock()
 
@@ -210,6 +210,13 @@ class _Peticion(BaseHTTPRequestHandler):
         if url.path == '/api/v1/router':
             datos = (app.router.estado(self._clave_router()) if app.router else
                      {'estado': 'desactivado', 'autorizada': False, 'tablas': {}, 'series': []})
+            if datos.get('autorizada'):
+                try:
+                    datos['diagnostico'] = diagnosticar_trafico(datos, app.estado_conectividad(), app.estado_web())
+                except Exception:
+                    app.logger.error('No se pudo construir el diagnóstico autorizado.')
+                    self._error(500, 'error_consulta', 'No se pudo construir la consulta.')
+                    return
             self._json(200, {'version_esquema': 1, 'datos': datos})
             return
         if url.path == '/api/v1/estado':
@@ -218,7 +225,7 @@ class _Peticion(BaseHTTPRequestHandler):
         if url.path in ('/api/v1/conectividad', '/api/v1/web', '/api/v1/observaciones'):
             try:
                 if url.path == '/api/v1/observaciones':
-                    datos = analizar_observaciones(app.estado_web(), app.estado_conectividad())
+                    datos = diagnosticar_conexion(app.estado_web(), app.estado_conectividad())
                 else:
                     datos = app.estado_web() if url.path == '/api/v1/web' else app.estado_conectividad()
             except Exception:

@@ -62,6 +62,7 @@ test('explica la comparación de tiempos, distingue ausencia de datos y retira r
 test('prioriza una orientación, permite abrir evidencia y descarta un contrato incompleto', async () => {
   vi.useFakeTimers()
   const datos = { estado: 'observado', titulo: 'Título secundario', explicacion: '', orientacion: '', limite: '', evidencia: [],
+    diagnostico: { hallazgos: ['Se observaron respuestas posteriores.'], comprobar: 'Comprueba si vuelve a funcionar.', falta: 'No garantiza recuperación definitiva.' },
     principal: { estado: 'observar', titulo: 'El sitio respondió ahora, pero hubo problemas antes.',
       explicacion: 'Hubo dos pruebas con problemas.', orientacion: 'Comprueba si tu aplicación vuelve a funcionar.', fuente: 'Visita al sitio de prueba' },
     incidencias: { estado: 'observado', mensaje: 'El problema se observó más de una vez.', errores_medicion: 1,
@@ -73,6 +74,8 @@ test('prioriza una orientación, permite abrir evidencia y descarta un contrato 
   await flushPromises()
   expect(vista.get('.resultado-principal').text()).toContain('respondió ahora')
   expect(vista.text()).not.toContain('Título secundario')
+  expect(vista.text()).toContain('Cómo comprobar si mejora')
+  expect(vista.text()).toContain('No garantiza recuperación definitiva.')
   expect(vista.text()).toContain('más de una vez')
   const detalle = vista.findAll('details').find(d => d.text().includes('Ver qué pasó'))
   expect(detalle.attributes('open')).toBeUndefined()

@@ -186,6 +186,21 @@ const grupos = computed(() => {
       </form>
     </details>
     <template v-if="visible">
+      <div v-if="datos.diagnostico">
+        <h3>¿El uso de Internet coincide con respuestas más lentas?</h3>
+        <p>{{ datos.diagnostico.mensaje }}</p><p>{{ datos.diagnostico.siguiente_paso }}</p>
+        <article v-for="r in datos.diagnostico.comparaciones" :key="`${r.fuente}-${r.interfaz}`" class="resumen-destino">
+          <h4>{{ r.familia_ip }} · {{ r.interfaz }}</h4><p>{{ r.mensaje }}</p>
+          <p>Qué puedes revisar: {{ r.orientacion }}</p><p>Cómo comprobar si mejora: {{ r.comprobar }}</p>
+          <details><summary>Ver la comparación</summary>
+            <p>Tráfico promedio de subida y bajada juntos: antes {{ tasa(r.anterior.mbps) }}; últimos cinco minutos {{ tasa(r.reciente.mbps) }}.</p>
+            <p>Tiempo de tráfico medido: antes {{ r.anterior.segundos }} s; después {{ r.reciente.segundos }} s, de 300 s en cada periodo.</p>
+            <p v-if="r.acceso">Acceso al sitio de prueba: {{ r.acceso.mensaje }}</p>
+            <p v-for="t in r.respuestas" :key="t.destino">{{ t.nombre }}: antes {{ t.anterior.promedio_ms }} ms; después {{ t.reciente.promedio_ms }} ms.</p>
+          </details>
+        </article>
+        <p>{{ datos.diagnostico.consumo_individual }}</p>
+      </div>
       <label>Periodo para cantidades y gráficas <select v-model="periodo" data-periodo-trafico><option :value="60">Último minuto</option><option :value="300">Últimos 5 minutos</option><option :value="600">Últimos 10 minutos</option></select></label>
       <p v-if="avisoPeriodo" role="status">{{ avisoPeriodo }}</p>
       <p v-if="!cantidades.length">No hay cantidades disponibles para este periodo. Espera lecturas comparables; la ausencia de datos no significa consumo cero.</p>

@@ -24,6 +24,12 @@ function fecha(valor) { return valor ? new Date(valor).toLocaleString('es-MX') :
       <p>{{ principal.explicacion }}</p>
       <h3>Qué puedes intentar</h3><p>{{ principal.orientacion }}</p>
       <p v-if="principal.fecha || datos.ultima_comprobacion" class="secundario">Comprobado: {{ fecha(principal.fecha || datos.ultima_comprobacion) }}<span v-if="principal.fuente"> · {{ principal.fuente }}</span></p>
+      <div v-if="datos.diagnostico">
+        <h3>Qué encontramos</h3>
+        <ul><li v-for="(hallazgo, i) in datos.diagnostico.hallazgos" :key="i">{{ hallazgo }}</li></ul>
+        <h3>Cómo comprobar si mejora</h3><p>{{ datos.diagnostico.comprobar }}</p>
+        <h3>Qué falta comprobar</h3><p>{{ datos.diagnostico.falta }}</p>
+      </div>
       <div v-if="datos.incidencias?.estado === 'observado'">
         <h3>¿Ha ocurrido más de una vez?</h3>
         <p>{{ datos.incidencias.mensaje }}</p>
