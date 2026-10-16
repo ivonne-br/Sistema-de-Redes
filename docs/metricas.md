@@ -229,3 +229,33 @@ Las recomendaciones son pasos manuales de comprobación. No cambian DNS, Wi-Fi,
 router ni permisos. Relacionar consumo con problemas requiere evidencia de tráfico
 autorizada, periodos compatibles y reglas adicionales; estas observaciones públicas
 no identifican qué dispositivo consume más ni causan operaciones administrativas.
+
+
+## 10. Cantidades observadas en conexiones del router
+
+El resumen autorizado de tráfico ofrece ventanas de 60, 300 y 600 segundos,
+calculadas con el reloj continuo. Para cada fuente, familia IP e interfaz suma
+las diferencias de bytes de intervalos comparables completos dentro de la ventana.
+No reparte proporcionalmente un intervalo que cruce su comienzo. Las cantidades
+exactas se entregan como cadenas de bytes; MB usa 1.000.000 de bytes.
+
+Un intervalo requiere dos lecturas separadas por más de cero y como máximo 20
+segundos, sin descenso de ninguno de los contadores. El inicio, los reinicios,
+las pausas y los fallos de lectura no aportan una cantidad estimada. Sin intervalos
+válidos, la cantidad es `null`; con intervalos válidos sin incremento, es cero.
+
+Cada resumen informa segundos medidos, segundos del periodo sin medición
+utilizable, intervalos válidos y puntos excluidos. El tiempo sin medición incluye
+el anterior al inicio del recolector: no equivale a tiempo sin Internet. La fecha
+de la última lectura se conserva aunque falle la siguiente consulta.
+
+El selector de periodo controla las cantidades y las gráficas del router. Cada
+punto de tasa se sitúa al final de su intervalo; puede aparecer junto al inicio
+de una ventana sin contribuir a su suma, si parte del intervalo queda fuera.
+La elección de subida o bajada en la gráfica no modifica el total de ambas
+mostrado en las tarjetas. La consulta no genera nuevas lecturas del router.
+
+No se agregan interfaces ni familias IP entre sí mientras no esté comprobado su
+alcance. Tampoco se atribuyen estos datos a dispositivos. Todos estos resúmenes
+requieren la misma autorización temporal que las tablas y series del router;
+el Invitado no los recibe. Solo el periodo elegido se guarda como preferencia.

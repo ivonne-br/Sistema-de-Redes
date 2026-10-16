@@ -47,3 +47,16 @@ test('excluye edades fuera de ventana y valores inválidos sin recuperar un valo
   await vista.findAll('select')[2].setValue('tabla')
   expect(vista.findAll('tbody tr')).toHaveLength(2)
 })
+
+
+test('el periodo externo filtra la gráfica y el restablecimiento avisa al padre', async () => {
+  vista = crear()
+  await vista.setProps({ periodo: 60 })
+  expect(vista.findAll('circle')).toHaveLength(1)
+  await vista.findAll('select')[0].setValue('600')
+  expect(vista.emitted('update:periodo').at(-1)).toEqual([600])
+  await vista.setProps({ periodo: 600 })
+  expect(vista.findAll('circle')).toHaveLength(4)
+  await vista.get('button').trigger('click')
+  expect(vista.emitted('update:periodo').at(-1)).toEqual([300])
+})

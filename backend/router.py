@@ -86,6 +86,45 @@ def _contexto(lectura):
         return None
 
 
+def resumir_trafico(series, ahora, ventana_s=600):
+    """Suma bytes de intervalos completos en la ventana, separados por fuente.
+
+    Entrada: puntos privados con edad continua y diferencias enteras. Salida:
+    cantidades exactas como texto y duración medida para API/Vue. No extrapola
+    huecos ni reparte un intervalo que cruce el inicio de la ventana.
+    """
+    grupos = {}
+    for p in series:
+        edad = ahora - p['_t']
+        if not 0 <= edad < ventana_s:
+            continue
+        clave = (p['fuente'], p['familia_ip'], p['interfaz'])
+        g = grupos.setdefault(clave, {'fuente': clave[0], 'familia_ip': clave[1], 'interfaz': clave[2],
+            'ventana_s': ventana_s, 'intervalos_validos': 0, 'segundos_medidos': 0,
+            'intervalos_excluidos': 0, 'bytes_recibidos': None, 'bytes_enviados': None,
+            'recibidos_mb': None, 'enviados_mb': None, 'total_mb': None,
+            'ultima_fecha': p['fecha'], 'antiguedad_s': edad})
+        g.update(ultima_fecha=p['fecha'], antiguedad_s=edad)
+        dt = p.get('intervalo_s')
+        rx, tx = p.get('bytes_recibidos'), p.get('bytes_enviados')
+        if (p.get('motivo') != 'intervalo_valido' or dt is None or not 0 < dt <= 20
+                or edad + dt > ventana_s or type(rx) is not int or type(tx) is not int or rx < 0 or tx < 0):
+            g['intervalos_excluidos'] += 1
+            continue
+        g['intervalos_validos'] += 1
+        g['segundos_medidos'] += dt
+        g['bytes_recibidos'] = (g['bytes_recibidos'] or 0) + rx
+        g['bytes_enviados'] = (g['bytes_enviados'] or 0) + tx
+    for g in grupos.values():
+        if g['intervalos_validos']:
+            g.update(recibidos_mb=g['bytes_recibidos'] / 1e6, enviados_mb=g['bytes_enviados'] / 1e6,
+                     total_mb=(g['bytes_recibidos'] + g['bytes_enviados']) / 1e6)
+            g['bytes_recibidos'], g['bytes_enviados'] = str(g['bytes_recibidos']), str(g['bytes_enviados'])
+        g['segundos_medidos'] = round(g['segundos_medidos'], 3)
+        g['segundos_sin_medicion'] = round(max(0, ventana_s - g['segundos_medidos']), 3)
+    return list(grupos.values())
+
+
 class MonitoreoRouter:
     """Un recolector independiente, una autorización y hasta diez minutos en RAM.
 
@@ -193,7 +232,7 @@ class MonitoreoRouter:
             permitido = self._permitido(clave)
             salida = {'estado': self._estado, 'etapa_error': self._etapa_error, 'id_contexto': self._id,
                       'gateway_candidato': self._red['gateway'] if self._red else None,
-                      'autorizada': permitido, 'tablas': {}, 'series': [],
+                      'autorizada': permitido, 'tablas': {}, 'series': [], 'resumen_trafico': [], 'trafico_por_periodo': {},
                       'intervalo_s': 5, 'retencion_s': 600}
             if permitido:
                 salida['restante_s'] = max(0, self._sesion['vence'] - self._reloj())
@@ -206,7 +245,12 @@ class MonitoreoRouter:
                 # Edad continua para representar huecos sin depender del reloj civil del navegador.
                 instante = self._reloj()
                 salida['series'] = [{**{k: v for k, v in p.items() if k != '_t'},
-                                     'antiguedad_s': max(0, instante - p['_t'])} for p in self._series]
+                                     'antiguedad_s': max(0, instante - p['_t']),
+                                     'bytes_recibidos': str(p['bytes_recibidos']) if p.get('bytes_recibidos') is not None else None,
+                                     'bytes_enviados': str(p['bytes_enviados']) if p.get('bytes_enviados') is not None else None} for p in self._series]
+                salida['trafico_por_periodo'] = {str(periodo): resumir_trafico(self._series, instante, periodo)
+                                               for periodo in (60, 300, 600)}
+                salida['resumen_trafico'] = salida['trafico_por_periodo']['600']
             return salida
 
     def _vigente(self, sesion, red):
@@ -308,6 +352,7 @@ class MonitoreoRouter:
                         punto = {'_t': t, 'fecha': fecha, 'fuente': fuente,
                                  'interfaz': contador['interfaz'], 'familia_ip': contador['familia_ip'],
                                  'bajada_mbps': None, 'subida_mbps': None, 'intervalo_s': None,
+                                 'bytes_recibidos': None, 'bytes_enviados': None,
                                  'motivo': 'referencia_inicial'}
                         if previa:
                             dt = t - previa[0]
@@ -315,7 +360,8 @@ class MonitoreoRouter:
                             if 0 < dt <= 20 and rx >= previa[1] and tx >= previa[2]:
                                 punto.update(bajada_mbps=(rx - previa[1]) * 8 / dt / 1e6,
                                              subida_mbps=(tx - previa[2]) * 8 / dt / 1e6,
-                                             intervalo_s=dt, motivo='intervalo_valido')
+                                             intervalo_s=dt, motivo='intervalo_valido',
+                                             bytes_recibidos=rx - previa[1], bytes_enviados=tx - previa[2])
                         self._series.append(punto)
                         self._bases[clave] = (t, rx, tx)
                         muestra['wan'].append({**contador, 'bytes_rx': str(rx), 'bytes_tx': str(tx)})

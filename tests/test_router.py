@@ -76,6 +76,69 @@ class PruebasRouter(unittest.TestCase):
         self.assertNotIn('_t', lectura['series'][0])
         self.assertEqual(self.monitor.estado()['series'], [])
 
+    def test_volumen_privado_con_ceros_huecos_y_reinicio(self):
+        self.monitor.ciclo()
+        r = self.monitor.estado(self.clave)['resumen_trafico'][0]
+        self.assertIsNone(r['total_mb'])
+        self.t = 5
+        self.monitor.ciclo()
+        r = self.monitor.estado(self.clave)['resumen_trafico'][0]
+        self.assertEqual(r['total_mb'], 0)
+        self.t = 10; self.rx += 2_000_000; self.tx += 1_000_000
+        self.monitor.ciclo()
+        estado = self.monitor.estado(self.clave)
+        self.assertEqual(len(estado['resumen_trafico']), 2)
+        r = estado['resumen_trafico'][0]
+        self.assertEqual(r['total_mb'], 3)
+        self.assertEqual(r['segundos_medidos'], 10)
+        self.assertEqual(r['bytes_recibidos'], '2000000')
+        self.assertEqual(estado['series'][-1]['bytes_enviados'], '1000000')
+        self.t = 40; self.rx += 5_000_000
+        self.monitor.ciclo()
+        self.t = 45; self.rx = 0; self.tx = 0
+        self.monitor.ciclo()
+        r = self.monitor.estado(self.clave)['resumen_trafico'][0]
+        self.assertEqual(r['total_mb'], 3)
+        self.assertEqual(r['segundos_medidos'], 10)
+        self.assertEqual(self.monitor.estado()['resumen_trafico'], [])
+
+    def test_volumen_excluye_intervalo_que_cruza_inicio_y_no_redondea_bytes_grandes(self):
+        from backend.router import resumir_trafico
+        p = {'_t': 10, 'fecha': 'fecha', 'fuente': 'wan', 'familia_ip': 'IPv4',
+             'interfaz': 'uno', 'intervalo_s': 5, 'motivo': 'intervalo_valido',
+             'bytes_recibidos': 2**60 + 1, 'bytes_enviados': 2}
+        r = resumir_trafico([p], 605)[0]
+        self.assertEqual(r['bytes_recibidos'], str(2**60 + 1))
+        r = resumir_trafico([p], 606)[0]
+        self.assertIsNone(r['total_mb'])
+        self.assertEqual(r['intervalos_excluidos'], 1)
+        self.assertEqual(resumir_trafico([p], 610), [])
+
+    def test_periodos_miden_solo_intervalos_completos_y_no_se_publican_al_invitado(self):
+        self.monitor.ciclo()
+        for t in range(5, 71, 5):
+            self.t = t; self.rx += 1_000_000; self.tx += 500_000
+            self.monitor.ciclo()
+        n = len(self.llamadas)
+        datos = self.monitor.estado(self.clave)
+        corto = datos['trafico_por_periodo']['60'][0]
+        largo = datos['trafico_por_periodo']['300'][0]
+        self.assertEqual(corto['segundos_medidos'], 60)
+        self.assertEqual(corto['segundos_sin_medicion'], 0)
+        self.assertEqual(corto['total_mb'], 18)
+        self.assertEqual(largo['total_mb'], 21)
+        self.assertEqual(largo['segundos_sin_medicion'], 230)
+        self.assertEqual(len(self.llamadas), n)
+        self.assertEqual(self.monitor.estado()['trafico_por_periodo'], {})
+        self.t = 100
+        despues = self.monitor.estado(self.clave)['trafico_por_periodo']['60'][0]
+        self.assertEqual(despues['segundos_medidos'], 30)
+        self.assertEqual(despues['segundos_sin_medicion'], 30)
+        self.assertEqual(despues['ultima_fecha'], corto['ultima_fecha'])
+        self.red['contexto']['gateway'] = '192.168.50.254'
+        self.monitor.ciclo()
+        self.assertEqual(self.monitor.estado(self.clave)['trafico_por_periodo'], {})
+
     def test_tasas_reset_pausa_y_familias_separadas(self):
         self.monitor.ciclo()
         self.t = 5; self.rx += 10_000_000; self.tx += 1_000_000
