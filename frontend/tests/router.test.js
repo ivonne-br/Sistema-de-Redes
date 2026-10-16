@@ -151,3 +151,50 @@ test('filtra equipos sin guardar identidades ni hacer consultas nuevas', async (
   expect(consulta).toHaveBeenCalledTimes(n)
   expect(JSON.stringify(localStorage)).not.toContain('Equipo')
 })
+
+
+test('presenta cantidades parciales por conexión y las retira al perder acceso', async () => {
+  const { datos, consulta } = await preparar()
+  datos.resumen_trafico = [{ fuente: 'wan-prueba', familia_ip: 'IPv4', interfaz: 'prueba',
+    recibidos_mb: 2, enviados_mb: 1, total_mb: 3, segundos_medidos: 5, intervalos_validos: 1,
+    intervalos_excluidos: 1, antiguedad_s: 30, ultima_fecha: new Date().toISOString() }]
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(vista.text()).toContain('3 MB')
+  expect(vista.text()).toContain('5 segundos medidos')
+  expect(vista.text()).toContain('La última lectura es antigua')
+  datos.resumen_trafico[0].total_mb = null
+  datos.resumen_trafico[0].intervalos_validos = 0
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(vista.text()).toContain('Todavía no hay dos lecturas comparables')
+  consulta.mockRejectedValueOnce(new Error('Sin servicio'))
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(vista.text()).not.toContain('¿Cuántos datos pasaron')
+})
+
+
+test('un periodo común actualiza cantidades y gráficas sin repetir consultas', async () => {
+  const { datos, consulta } = await preparar()
+  const resumen = total => [{ fuente: 'wan', familia_ip: 'IPv4', interfaz: 'prueba', total_mb: total,
+    recibidos_mb: total, enviados_mb: 0, segundos_medidos: 5, segundos_sin_medicion: 55,
+    intervalos_validos: 1, intervalos_excluidos: 0, antiguedad_s: 0, ultima_fecha: new Date().toISOString() }]
+  datos.trafico_por_periodo = { '60': resumen(1), '300': resumen(2), '600': resumen(3) }
+  datos.series = [{ familia_ip: 'IPv4', interfaz: 'prueba', fecha: new Date().toISOString(),
+    antiguedad_s: 10, bajada_mbps: 1, subida_mbps: 0 }]
+  await vi.advanceTimersByTimeAsync(5000)
+  const n = consulta.mock.calls.length
+  expect(vista.text()).toContain('3 MB')
+  await vista.get('[data-periodo-trafico]').setValue('60')
+  expect(vista.text()).toContain('1 MB')
+  expect(vista.text()).not.toContain('3 MB')
+  expect(vista.findAll('.evolucion select')[0].element.value).toBe('60')
+  expect(vista.text()).toContain('55 segundos del periodo sin medición')
+  await vista.findAll('.evolucion select')[0].setValue('300')
+  expect(vista.get('[data-periodo-trafico]').element.value).toBe('300')
+  expect(vista.text()).toContain('2 MB')
+  expect(consulta).toHaveBeenCalledTimes(n)
+  expect(localStorage.getItem('red-trafico-periodo-v1')).toBe('300')
+  datos.trafico_por_periodo['300'] = []
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(vista.text()).toContain('No hay cantidades disponibles')
+  expect(vista.text()).not.toContain('2 MB')
+})

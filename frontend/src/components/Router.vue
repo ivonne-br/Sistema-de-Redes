@@ -1,13 +1,23 @@
 <!-- Consulta memoria protegida del backend y autoriza lectura temporal del router.
-     Entradas: API local y sesión del panel introducida aquí; salida: DHCP y series WAN.
+     Entradas: API local y sesión del panel introducida aquí; salida: DHCP, series WAN y volumen observado en intervalos válidos.
      El inventario DHCP no aporta consumo individual; la vista expresa esa limitación.
      Contraseña solo durante el envío; permiso local en cookie HttpOnly de sesión,
      nunca en preferencias. Admite la clave en memoria de versiones anteriores. -->
 <script setup>
-import { computed, onUnmounted, ref } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import Evolucion from './Evolucion.vue'
 import { useResumen } from '../useResumen.js'
 
+// Preferencia visual compartida por cantidades y gráficas; no contiene datos de red.
+function leerPeriodo() {
+  try { const p = Number(localStorage.getItem('red-trafico-periodo-v1')); return [60, 300, 600].includes(p) ? p : 600 }
+  catch { return 600 }
+}
+const periodo = ref(leerPeriodo()), avisoPeriodo = ref('')
+watch(periodo, p => {
+  try { localStorage.setItem('red-trafico-periodo-v1', String(p)) }
+  catch { avisoPeriodo.value = 'El periodo se aplica, pero no se pudo guardar en este navegador.' }
+})
 const clave = ref(''), cookie = ref(''), csrf = ref(''), confirmado = ref(false)
 const sesionCookie = ref(false)
 const acceso = computed(() => Boolean(clave.value || sesionCookie.value))
@@ -47,6 +57,11 @@ const { respuesta, error, cargando } = useResumen(async signal => {
 const datos = computed(() => respuesta.value?.datos)
 const visible = computed(() => !error.value && acceso.value && datos.value?.autorizada && ahora.value < vence.value)
 const buscarEquipo = ref('')
+const cantidades = computed(() => {
+  if (!visible.value) return []
+  return datos.value.trafico_por_periodo?.[String(periodo.value)]
+    ?? (periodo.value === 600 ? datos.value.resumen_trafico : null) ?? []
+})
 const inventario = computed(() => visible.value ? datos.value.tablas['dhcp-json'] : null)
 // Filtro local de registros ya autorizados; no se guarda la búsqueda ni la identidad.
 const equiposVisibles = computed(() => {
@@ -73,6 +88,7 @@ const etiquetas = {
   error_lectura_router: 'No se pudo leer el router', error_recoleccion: 'Fallo de recolección', detenido: 'Recolector detenido',
 }
 function fecha(v) { return new Date(v).toLocaleString('es-MX') }
+function volumen(v) { return v == null ? 'No disponible' : `${v.toLocaleString('es-MX', { maximumFractionDigits: 3 })} MB` }
 function tasa(v) { return v == null ? 'Sin intervalo válido' : `${v.toFixed(3)} Mb/s` }
 async function autorizar() {
   pendiente.value = true; mensaje.value = ''
@@ -170,6 +186,28 @@ const grupos = computed(() => {
       </form>
     </details>
     <template v-if="visible">
+      <label>Periodo para cantidades y gráficas <select v-model="periodo" data-periodo-trafico><option :value="60">Último minuto</option><option :value="300">Últimos 5 minutos</option><option :value="600">Últimos 10 minutos</option></select></label>
+      <p v-if="avisoPeriodo" role="status">{{ avisoPeriodo }}</p>
+      <p v-if="!cantidades.length">No hay cantidades disponibles para este periodo. Espera lecturas comparables; la ausencia de datos no significa consumo cero.</p>
+      <div v-if="cantidades.length">
+        <h3>¿Cuántos datos pasaron por las conexiones del router?</h3>
+        <p>Sumamos los datos recibidos y enviados en los intervalos completos medidos del periodo elegido ({{ periodo / 60 }} minutos). Si faltan lecturas, la cantidad es parcial: no estimamos lo que ocurrió durante esos huecos.</p>
+        <article v-for="r in cantidades" :key="`${r.fuente}-${r.familia_ip}-${r.interfaz}`" class="resumen-destino">
+          <h4>{{ r.familia_ip }} · {{ r.interfaz }}</h4>
+          <dl class="indicadores">
+            <div><dt>Recibido (bajada)</dt><dd>{{ volumen(r.recibidos_mb) }}</dd></div>
+            <div><dt>Enviado (subida)</dt><dd>{{ volumen(r.enviados_mb) }}</dd></div>
+            <div><dt>Total observado en esta conexión</dt><dd>{{ volumen(r.total_mb) }}</dd></div>
+          </dl>
+          <p>{{ r.segundos_medidos }} segundos medidos en {{ r.intervalos_validos }} intervalos válidos. No representa necesariamente todo el periodo elegido.</p>
+          <p v-if="r.segundos_sin_medicion != null">{{ r.segundos_sin_medicion }} segundos del periodo sin medición utilizable. No sabemos cuántos datos pasaron durante ese tiempo.</p>
+          <p v-if="!r.intervalos_validos">Todavía no hay dos lecturas comparables para calcular una cantidad. No significa consumo cero.</p>
+          <p v-if="r.antiguedad_s > 20">La última lectura es antigua; estas cantidades no incluyen lo que haya ocurrido después.</p>
+          <p>Última lectura: {{ fecha(r.ultima_fecha) }}.</p>
+          <details><summary>Cómo se obtuvo esta cantidad</summary><p>Fuente: {{ r.fuente }}. {{ r.intervalos_excluidos }} puntos no aportaron un intervalo completo válido dentro del periodo. Pueden corresponder al inicio, a una pausa, a contadores reiniciados o al límite del periodo.</p><p>1 MB equivale a 1.000.000 de bytes. Es una cantidad de datos; Mb/s indica cuántos pasan por segundo.</p></details>
+        </article>
+        <p>No sumamos las conexiones ni IPv4 e IPv6 entre sí: todavía falta comprobar su alcance. Estas cantidades no identifican cuánto consumió cada equipo ni demuestran saturación.</p>
+      </div>
       <p>Fuente: tablas del panel Sercomm con formato comprobado. No se ha verificado automáticamente su modelo ni firmware. IPv4 e IPv6 se mantienen separados; el alcance exacto del tráfico de la interfaz sigue por comprobar.</p>
       <template v-if="inventario">
         <h3>Inventario DHCP informado</h3>
@@ -189,9 +227,9 @@ const grupos = computed(() => {
         <h3>Tráfico WAN · {{ g.id }}</h3>
         <p>Última muestra: {{ fecha(g.puntos.at(-1).fecha) }}. Bajada: {{ tasa(g.puntos.at(-1).bajada_mbps) }} · Subida: {{ tasa(g.puntos.at(-1).subida_mbps) }}.</p>
         <p v-if="g.puntos.at(-1).antiguedad_s > 20">Muestra desactualizada.</p>
-        <Evolucion :series="g.series" unidad="Mb/s" :titulo="`Uso observado · ${g.id}`" preferencia="trafico" :hueco="20" />
+        <Evolucion v-model:periodo="periodo" :series="g.series" unidad="Mb/s" :titulo="`Uso observado · ${g.id}`" preferencia="trafico" :hueco="20" />
       </article>
-      <p>Sin consumo por dispositivo. Las tasas son promedios entre lecturas, no la capacidad contratada.</p>
+      <p>Sin consumo por dispositivo. Las tasas son promedios entre lecturas, no la capacidad contratada. La gráfica sitúa cada tasa al terminar su intervalo; las cantidades solo suman intervalos completos dentro del periodo. Un punto junto al inicio puede quedar fuera de esa suma.</p>
     </template>
   </section>
 </template>
