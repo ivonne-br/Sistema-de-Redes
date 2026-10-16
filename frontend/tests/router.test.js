@@ -198,3 +198,20 @@ test('un periodo común actualiza cantidades y gráficas sin repetir consultas',
   expect(vista.text()).toContain('No hay cantidades disponibles')
   expect(vista.text()).not.toContain('2 MB')
 })
+
+
+test('el diagnóstico autorizado desaparece si falla la consulta o se retira el acceso', async () => {
+  const { datos, consulta } = await preparar()
+  datos.diagnostico = { estado: 'insuficiente', comparaciones: [], mensaje: 'Esperando periodos compatibles.',
+    siguiente_paso: 'Se actualiza automáticamente.', consumo_individual: 'No disponible por dispositivo.' }
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(vista.text()).toContain('Esperando periodos compatibles')
+  consulta.mockRejectedValueOnce(new Error('falló'))
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(vista.text()).not.toContain('Esperando periodos compatibles')
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(vista.text()).toContain('Esperando periodos compatibles')
+  await vista.findAll('button').find(b => b.text() === 'Finalizar acceso de lectura').trigger('click')
+  await flushPromises()
+  expect(vista.text()).not.toContain('Esperando periodos compatibles')
+})

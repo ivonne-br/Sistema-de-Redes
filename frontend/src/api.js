@@ -5,6 +5,9 @@ export async function consultarObservaciones(signal) {
   const cuerpo = await respuesta.json()
   const d = cuerpo.datos
   if (cuerpo.version_esquema !== 1 || !d || !Array.isArray(d.evidencia)
+    || (d.diagnostico != null && (!Array.isArray(d.diagnostico.hallazgos)
+      || d.diagnostico.hallazgos.some(h => typeof h !== 'string')
+      || typeof d.diagnostico.comprobar !== 'string' || typeof d.diagnostico.falta !== 'string'))
     || (d.principal != null && ['estado', 'titulo', 'explicacion', 'orientacion', 'fuente'].some(c => typeof d.principal[c] !== 'string'))
     || (d.nombres != null && ['estado', 'titulo', 'explicacion', 'orientacion'].some(c => typeof d.nombres[c] !== 'string'))
     || (d.incidencias != null && (typeof d.incidencias.mensaje !== 'string' || !Array.isArray(d.incidencias.eventos)

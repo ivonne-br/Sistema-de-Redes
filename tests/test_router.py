@@ -259,7 +259,9 @@ class PruebasRouter(unittest.TestCase):
 
     def test_api_privada_origen_autorizacion_y_retiro(self):
         self.monitor.revocar(self.clave)
-        app = SimpleNamespace(router=self.monitor, logger=Mock())
+        app = SimpleNamespace(router=self.monitor, logger=Mock(),
+                              estado_web=lambda: {'estado': 'desactivada'},
+                              estado_conectividad=lambda: {'estado': 'desactivada'})
         servidor = _ServidorLocal(('127.0.0.1', 0), app)
         hilo = Thread(target=servidor.serve_forever)
         hilo.start()
