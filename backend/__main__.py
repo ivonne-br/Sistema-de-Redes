@@ -21,11 +21,14 @@ from backend.api import APILocal
 from backend.router_texto import interpretar_texto_router, LIMITE_TEXTO
 from backend.router_json import interpretar_json_router, FUENTES
 from backend.router import MonitoreoRouter
+from backend.inicio import RAIZ, dashboard_valido
 
 
 def ejecutar_api(configuracion, logger):
     """Conecta señales del CLI al cierre de la API y su único monitoreo."""
-    api = APILocal(configuracion, logger=logger, router=MonitoreoRouter())
+    dist = RAIZ / 'frontend/dist'
+    api = APILocal(configuracion, logger=logger, router=MonitoreoRouter(),
+                   dashboard=dist if dashboard_valido(dist) else None)
     anteriores = {}
     try:
         for senal in (signal.SIGINT, signal.SIGTERM):

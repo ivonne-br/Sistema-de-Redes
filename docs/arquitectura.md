@@ -2,15 +2,12 @@
 
 La arquitectura deberá permitir observar una red doméstica, analizar automáticamente sus métricas, presentar información comprensible y ejecutar modificaciones compatibles cuando una persona las confirme y tenga autorización administrativa vigente.
 
-
 ## 1. Enfoque y entorno de ejecución
 
 Se adopta una aplicación de instalación local por vivienda, con frontend web
 Vue.js y backend modular Python comunicados mediante una API REST local. La
 computadora instalada ejecuta el recolector y backend y muestra el dashboard;
 puede ser el mismo ordenador que usa la persona para consultar y administrar.
-La implementación del empaquetado y del iniciador está pendiente. El desarrollo
-actual usa el CLI y no declara implementado el ciclo de aplicación instalada.
 
 El iniciador deberá arrancar una única instancia de backend por instalación,
 comprobar que esté preparada antes de mostrar el dashboard e informar fallos

@@ -1,4 +1,5 @@
-// Integra fuentes públicas y router privado con HTTP simulado; verifica independencia, recuperación y ausencia de autorización automática.
+// Recibe HTTP simulado y acciones de pantalla; comprueba recuperación, cierre
+// confirmado del iniciador y separación respecto de los permisos del router.
 import { afterEach, expect, test, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import App from '../src/App.vue'
@@ -107,4 +108,58 @@ test('elegir vistas solo cambia la presentación y nunca autoriza el router', as
   await vista.findAll('button').find(b => b.text() === 'Revisar mi conexión').trigger('click')
   expect(vista.get('[data-panel=observaciones]').element.style.display).not.toBe('none')
   expect(consulta).toHaveBeenCalledTimes(5)
+})
+
+test('cierre requiere confirmación, permite cancelar y detiene las consultas después de aceptar', async () => {
+  vi.useFakeTimers()
+  const consulta = vi.fn(async (ruta, opciones) => {
+    if (ruta === '/api/v1/estado') return ok({ version_esquema: 1, cierre_disponible: true, monitoreo: { estado: 'activo', id_ejecucion: 'sesion-prueba' } })
+    if (ruta === '/api/v1/cierre') {
+      expect(opciones.method).toBe('POST')
+      expect(JSON.parse(opciones.body)).toEqual({ confirmado: true, id_ejecucion: 'sesion-prueba' })
+      return { status: 202, json: async () => ({ version_esquema: 1, estado: 'cierre_solicitado' }) }
+    }
+    return ok(fuentes(ruta))
+  })
+  vi.stubGlobal('fetch', consulta)
+  vista = mount(App)
+  await flushPromises()
+  const boton = texto => vista.findAll('button').find(b => b.text() === texto)
+  await boton('Cerrar aplicación').trigger('click')
+  expect(vista.get('[role=alertdialog]').text()).toContain('No se apagará Internet')
+  await boton('Cancelar').trigger('click')
+  expect(consulta.mock.calls.filter(([r]) => r === '/api/v1/cierre')).toHaveLength(0)
+  await boton('Cerrar aplicación').trigger('click')
+  await boton('Confirmar cierre').trigger('click')
+  await flushPromises()
+  expect(vista.text()).toContain('Cierre solicitado')
+  expect(vista.text()).not.toContain('Estado de la aplicación')
+  const total = consulta.mock.calls.length
+  await vi.advanceTimersByTimeAsync(15000)
+  expect(consulta).toHaveBeenCalledTimes(total)
+  expect(consulta.mock.calls.filter(([r]) => r === '/api/v1/cierre')).toHaveLength(1)
+})
+
+test('un servicio abierto por separado no ofrece cierre y un cierre fallido no se reenvía solo', async () => {
+  vi.useFakeTimers()
+  let cierreDisponible = false
+  const consulta = vi.fn(async ruta => {
+    if (ruta === '/api/v1/estado') return ok({ version_esquema: 1, cierre_disponible: cierreDisponible, monitoreo: { estado: 'activo', id_ejecucion: 'sesion-prueba' } })
+    if (ruta === '/api/v1/cierre') throw new Error('Sin respuesta')
+    return ok(fuentes(ruta))
+  })
+  vi.stubGlobal('fetch', consulta)
+  vista = mount(App)
+  await flushPromises()
+  const boton = texto => vista.findAll('button').find(b => b.text() === texto)
+  expect(boton('Cerrar aplicación')).toBeUndefined()
+  expect(vista.text()).toContain('Este servicio se abrió por separado')
+  cierreDisponible = true
+  await vi.advanceTimersByTimeAsync(5000)
+  await boton('Cerrar aplicación').trigger('click')
+  await boton('Confirmar cierre').trigger('click')
+  await flushPromises()
+  expect(vista.text()).toContain('No pudimos confirmar el cierre')
+  await vi.advanceTimersByTimeAsync(15000)
+  expect(consulta.mock.calls.filter(([r]) => r === '/api/v1/cierre')).toHaveLength(1)
 })
