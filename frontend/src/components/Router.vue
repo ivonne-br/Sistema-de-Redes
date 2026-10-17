@@ -1,10 +1,11 @@
-<!-- Consulta memoria protegida del backend y autoriza lectura temporal del router.
+<!-- Consulta memoria protegida y conecta identificación, lectura y administración.
      Entradas: API local y sesión del panel introducida aquí; salida: DHCP, series WAN y volumen observado en intervalos válidos.
      El inventario DHCP no aporta consumo individual; la vista expresa esa limitación.
      Contraseña solo durante el envío; permiso local en cookie HttpOnly de sesión,
      nunca en preferencias. Admite la clave en memoria de versiones anteriores. -->
 <script setup>
 import { computed, onUnmounted, ref, watch } from 'vue'
+import AdministracionRouter from './AdministracionRouter.vue'
 import Evolucion from './Evolucion.vue'
 import { useResumen } from '../useResumen.js'
 
@@ -157,20 +158,21 @@ const grupos = computed(() => {
     <p v-if="datos && !acceso && ['lectura_correcta', 'verificando_compatibilidad', 'error_fuente'].includes(datos.estado)">Hay una lectura en curso en el backend. Si pertenece a otro navegador o a una versión anterior, espera a que caduque (máximo 30 minutos desde su inicio), o finalízala desde la vista que tenga acceso.</p>
     <p v-if="datos?.etapa_error">El fallo ocurrió al {{ etapas[datos.etapa_error] ?? 'consultar el router' }}.</p>
     <p v-if="mensaje" role="status">{{ mensaje }}</p>
-    <p v-if="datos?.gateway_candidato">Puerta de enlace candidata: <strong>{{ datos.gateway_candidato }}</strong>. Esa dirección por sí sola no identifica el modelo.</p>
+    <details v-if="datos?.gateway_candidato"><summary>Identificación y dirección del router</summary><p>{{ datos.identificacion?.nombre ?? 'Comprobando el panel…' }}</p><p>Puerta de enlace candidata: <strong>{{ datos.gateway_candidato }}</strong>. Esa dirección por sí sola no identifica el modelo.</p></details>
     <p v-if="acceso && datos?.etapa_error">La sesión temporal se conserva; se volverá a intentar la consulta de lectura, sin reenviar la contraseña. Puedes finalizar el acceso.</p>
     <button v-if="acceso" type="button" @click="cerrar">Finalizar acceso de lectura</button>
     <p v-if="acceso && ahora < vence">Acceso de lectura: quedan aproximadamente {{ Math.ceil((vence - ahora) / 60000) }} minutos. Cambiar de red retira el permiso.</p>
     <p v-if="acceso && ahora >= vence">Acceso caducado: datos ocultos.</p>
     <details v-if="datos?.gateway_candidato && !error">
-      <summary>Conectar router Sercomm</summary>
+      <summary>Conectar mi router</summary>
+      <p v-if="datos.identificacion && !datos.identificacion.adaptador">Todavía no reconocemos este panel. Puedes seguir usando las comprobaciones generales. Para investigar compatibilidad, consulta el modelo y la versión en el panel o la etiqueta del equipo; no compartas contraseñas ni el número de serie.</p>
       <p>Usa el usuario de administración con el que entras al panel del router; no el nombre de la red Wi-Fi.</p>
       <p>Introduce el usuario y la contraseña del panel del router. Se realizará un solo intento; si falla, revisa el mensaje antes de volver a autorizar.</p>
-      <p>Los valores se introducen solo aquí y se conservan en memoria durante un máximo de 30 minutos. El router observado usa HTTP: el envío al router no está cifrado. La aplicación inicia sesión y después consulta las tablas; no cambia la configuración. La contraseña se descarta tras el intento.</p>
-      <p>El permiso local se conserva al recargar mediante una cookie de sesión HttpOnly, sin guardar la contraseña. Se comparte entre las pestañas de este perfil del navegador en la misma dirección local y caduca a los 30 minutos, aunque recargues. Usa «Finalizar acceso de lectura» para volver a la consulta como invitado.</p>
+      <p>Los valores se introducen solo aquí y se conservan en memoria durante un máximo de 30 minutos. El router observado usa HTTP: el envío al router no está cifrado. Este permiso inicia sesión y consulta las tablas. Los cambios requieren autorizar después la administración y confirmar cada operación. La contraseña se descarta tras el intento.</p>
+      <p>El permiso local se conserva al recargar mediante una cookie de sesión HttpOnly, sin guardar la contraseña. Se comparte entre las pestañas de este perfil del navegador en la misma dirección local y caduca a los 30 minutos, aunque recargues. Usa «Finalizar acceso de lectura» para volver a la consulta como invitado y retirar también cualquier permiso administrativo.</p>
       <label><input v-model="avanzado" type="checkbox" /> Usar una sesión existente (avanzado)</label>
       <form @submit.prevent="autorizar">
-        <fieldset :disabled="pendiente || acceso">
+        <fieldset :disabled="pendiente || acceso || !datos.identificacion?.adaptador">
         <template v-if="!avanzado">
           <label>Usuario del router <input v-model="usuario" autocomplete="off" maxlength="128" required /></label>
           <label>Contraseña del router <input v-model="password" type="password" autocomplete="off" maxlength="1024" required /></label>
@@ -179,13 +181,14 @@ const grupos = computed(() => {
         <label>Cookie de la sesión del panel <input v-model="cookie" type="password" autocomplete="off" maxlength="4096" required /></label>
         <label>Token CSRF del panel <input v-model="csrf" type="password" autocomplete="off" maxlength="256" required /></label>
         </template>
-        <label><input v-model="confirmado" type="checkbox" required /> Confirmo que tengo autorización para acceder al router Sercomm en {{ datos.gateway_candidato }} y autorizo su lectura temporal.</label>
+        <label><input v-model="confirmado" type="checkbox" required /> Confirmo que tengo autorización para acceder al router identificado en {{ datos.gateway_candidato }} y autorizo su lectura temporal.</label>
         <button type="submit">{{ pendiente || acceso ? 'Acceso solicitado' : 'Iniciar lectura automática' }}</button>
         </fieldset>
         <p v-if="acceso" role="status">{{ etiquetas[datos.estado] ?? 'Esperando resultado del router…' }}</p>
       </form>
     </details>
     <template v-if="visible">
+      <AdministracionRouter :clave="clave" :contexto="datos.id_contexto" :estado="datos.administracion" />
       <div v-if="datos.diagnostico">
         <h3>¿El uso de Internet coincide con respuestas más lentas?</h3>
         <p>{{ datos.diagnostico.mensaje }}</p><p>{{ datos.diagnostico.siguiente_paso }}</p>
@@ -228,13 +231,12 @@ const grupos = computed(() => {
         <h3>Inventario DHCP informado</h3>
         <p>Leído: {{ fecha(inventario.fecha) }} · {{ inventario.vigencia }} · {{ inventario.recuento.total }} registros, {{ inventario.recuento.activo }} activos, {{ inventario.recuento.inactivo }} inactivos, {{ inventario.recuento.estado_desconocido }} desconocidos.</p>
         <p v-if="inventario.ultimo_intento === 'error'">Falló la última lectura DHCP; esta tabla conserva su fecha anterior.</p>
-        <p>«Activo» es el estado DHCP del router, no una garantía de presencia instantánea.</p>
-        <p id="limite-consumo-dhcp">La tabla DHCP consultada no aporta bytes enviados ni recibidos por dispositivo. «No disponible» no significa consumo cero. Las tasas WAN se muestran por interfaz y no se pueden repartir entre los equipos.</p>
+        <p id="estado-equipos-router">«Activo» es el estado informado por el router en su registro de direcciones. No garantiza que el equipo esté conectado en este instante.</p>
         <label>Buscar equipo por nombre o dirección <input v-model="buscarEquipo" type="search" autocomplete="off" /></label>
         <p>{{ equiposVisibles.length }} registros coinciden con la búsqueda.</p>
         <p v-if="!equiposVisibles.length">No hay coincidencias en la tabla recibida. Esto no demuestra que un equipo esté desconectado.</p>
-        <div class="tabla-router" tabindex="0" role="region" aria-label="Equipos informados por el router"><table aria-describedby="limite-consumo-dhcp"><thead><tr><th>Nombre</th><th>IP</th><th>MAC</th><th>Conexión</th><th>Estado informado</th><th>Consumo</th></tr></thead>
-          <tbody><tr v-for="e in equiposVisibles" :key="`${e.ipv4}-${e.mac}`"><td>{{ e.nombre ?? 'Sin nombre' }}</td><td>{{ e.ipv4 }}</td><td>{{ e.mac }}</td><td>{{ e.conexion_original }}</td><td>{{ e.estado_original ?? `Desconocido (${e.codigo_estado_original})` }}</td><td>No disponible</td></tr></tbody>
+        <div class="tabla-router" tabindex="0" role="region" aria-label="Equipos informados por el router"><table aria-describedby="estado-equipos-router"><thead><tr><th>Nombre</th><th>IP</th><th>MAC</th><th>Conexión</th><th>Estado informado</th></tr></thead>
+          <tbody><tr v-for="e in equiposVisibles" :key="`${e.ipv4}-${e.mac}`"><td>{{ e.nombre ?? 'Sin nombre' }}</td><td>{{ e.ipv4 }}</td><td>{{ e.mac }}</td><td>{{ e.conexion_original }}</td><td>{{ e.estado_original ?? `Desconocido (${e.codigo_estado_original})` }}</td></tr></tbody>
         </table></div>
       </template>
       <p v-else>Inventario todavía no disponible.</p>

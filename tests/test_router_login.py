@@ -1,4 +1,6 @@
-"""Protocolo de login con respuestas artificiales; sin credenciales reales ni red."""
+"""Entradas: HTTP e identificación artificiales; salida: aserciones del login.
+Conecta router_login con MonitoreoRouter, sin credenciales reales ni red.
+"""
 import hashlib
 import hmac
 import json
@@ -76,7 +78,7 @@ class LoginTests(unittest.TestCase):
         red = {'estado': 'contexto_correcto', 'contexto': {'interfaz': 'en0',
             'ipv4_local': '192.168.50.2/24', 'gateway': '192.168.50.1', 'subred': '192.168.50.0/24'}}
         login = Mock(side_effect=ErrorRouter('autorizacion_rechazada'))
-        m = MonitoreoRouter(consultar_contexto=lambda: red, login=login)
+        m = MonitoreoRouter(identificar_router=lambda g: {'adaptador': 'sercomm', 'nombre': 'Simulado'}, consultar_contexto=lambda: red, login=login)
         m.ciclo()
         clave = m.autorizar({'usuario': 'prueba', 'password': 'artificial',
                             'confirmado': True, 'id_contexto': m.estado()['id_contexto']})

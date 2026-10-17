@@ -1,4 +1,4 @@
-// Respuestas artificiales: autorización, privacidad y discontinuidades sin red real.
+// Entradas: API artificial. Comprueba identificación, autorización y privacidad de Router.vue sin red real.
 import { afterEach, expect, test, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import Router from '../src/components/Router.vue'
@@ -20,7 +20,7 @@ test('una lectura del backend no concede acceso a una vista sin clave', async ()
 test('envía credenciales solo al endpoint local y limpia el formulario', async () => {
   const consulta = vi.fn(async (_, opciones) => opciones.method === 'POST'
     ? ok({ clave: 'local' }) : ok({ version_esquema: 1, datos: {
-      autorizada: false, id_contexto: 'A', gateway_candidato: '192.168.50.1', tablas: {}, series: [] } }))
+      autorizada: false, id_contexto: 'A', gateway_candidato: '192.168.50.1', identificacion: { adaptador: 'sercomm', nombre: 'Panel de prueba' }, tablas: {}, series: [] } }))
   vi.stubGlobal('fetch', consulta)
   vista = mount(Router)
   await flushPromises()
@@ -40,7 +40,7 @@ test('envía credenciales solo al endpoint local y limpia el formulario', async 
 async function preparar() {
   vi.useFakeTimers()
   const datos = { estado: 'requiere_autorizacion', autorizada: false, id_contexto: 'A',
-    gateway_candidato: '192.168.50.1', tablas: {}, series: [] }
+    gateway_candidato: '192.168.50.1', identificacion: { adaptador: 'sercomm', nombre: 'Panel de prueba' }, tablas: {}, series: [] }
   const consulta = vi.fn(async (_, opciones) => opciones.method === 'POST'
     ? ok({ clave: 'clave-local-artificial' }) : ok({ version_esquema: 1, datos: structuredClone(datos) }))
   vi.stubGlobal('fetch', consulta)
@@ -214,4 +214,15 @@ test('el diagnóstico autorizado desaparece si falla la consulta o se retira el 
   await vista.findAll('button').find(b => b.text() === 'Finalizar acceso de lectura').trigger('click')
   await flushPromises()
   expect(vista.text()).not.toContain('Esperando periodos compatibles')
+})
+
+test('un router desconocido conserva la consulta general sin habilitar credenciales', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => ok({ version_esquema: 1, datos: {
+    autorizada: false, estado: 'requiere_autorizacion', tablas: {}, series: [],
+    gateway_candidato: '192.168.50.1', identificacion: { adaptador: null, nombre: 'Sin identificar' },
+  } })))
+  vista = mount(Router); await flushPromises()
+  expect(vista.text()).toContain('Conectar mi router')
+  expect(vista.text()).toContain('comprobaciones generales')
+  expect(vista.get('fieldset').attributes('disabled')).toBeDefined()
 })
