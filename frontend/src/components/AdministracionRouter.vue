@@ -1,5 +1,5 @@
 <!-- Administración explícita: recibe sesión/contexto del Router y consulta la API.
-     Salida: planes confirmables y resultados verificados; secretos solo en memoria.
+     Salida: acciones y planes confirmables, sin explicación interna del acceso y resultados verificados; secretos solo en memoria.
      No envía cambios al montar ni guarda configuración en el navegador. -->
 <script setup>
 import { computed, onUnmounted, ref, watch } from 'vue'
@@ -147,11 +147,6 @@ async function ejecutar(accion) {
         <button :disabled="ocupado" @click="ejecutar('cancelar')">Cancelar cambio</button>
       </div>
     </template>
-    <details><summary>Cómo se comprueba y qué acceso utiliza</summary>
-      <p v-if="configuracion?.identidad?.modelo">Modelo: {{ configuracion.identidad.modelo }} · Firmware: {{ configuracion.identidad.firmware }} · Hardware: {{ configuracion.identidad.hardware }}.</p>
-      <p>Se reconoce el modelo y firmware antes de habilitar la administración. Cada envío utiliza la sesión temporal del router y vuelve a comprobar la red y el permiso.</p>
-      <p>Después se consulta la configuración guardada. Una regla de bloqueo verificada no demuestra que el dispositivo se haya apagado; prueba su acceso Wi-Fi por separado. Para nombre o contraseña, reconecta un dispositivo con los nuevos datos.</p>
-      <p>El panel de este equipo utiliza HTTP en la red local. No se guardan contraseñas ni ajustes en el navegador o en archivos.</p>
-    </details>
+
   </section>
 </template>

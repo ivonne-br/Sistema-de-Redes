@@ -1,89 +1,70 @@
-// Verifica orientación visible y retirada de conclusiones ante fallos con API simulada.
+// Entradas: API simulada. Verifica síntesis, recomendaciones reactivas y retirada
+// de conclusiones de Observaciones.vue ante errores o cambios de contexto.
 import { afterEach, expect, test, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import Observaciones from '../src/components/Observaciones.vue'
 let vista
+const base = () => ({ estado: 'observado', titulo: 'La prueba respondió.', explicacion: 'Esta computadora llegó al sitio de prueba.',
+  orientacion: 'Abre otra página.', evidencia: [], limite: '',
+  incidencias: { mensaje: 'Resumen del backend', estado: 'observado', correctos: 10, fallos: 0, errores_medicion: 0, eventos: [] } })
+async function preparar(datos) {
+  vi.useFakeTimers()
+  const pedir = vi.fn(async () => ({ ok: true, json: async () => structuredClone({ version_esquema: 1, datos }) }))
+  vi.stubGlobal('fetch', pedir)
+  vista = mount(Observaciones)
+  await flushPromises()
+  return pedir
+}
 afterEach(() => { vista?.unmount(); vi.useRealTimers(); vi.unstubAllGlobals() })
-test('explica, muestra evidencia a petición y oculta conclusiones antiguas hasta recuperarse', async () => {
-  vi.useFakeTimers()
-  const dato = { version_esquema: 1, datos: { estado: 'observado', titulo: 'La última comprobación pudo llegar a Internet.',
-    explicacion: 'El sitio de prueba respondió.', orientacion: 'Prueba abrir otra página.', limite: 'No prueba todos los sitios.',
-    recorrido: { estado: 'observado', titulo: 'Hubo respuestas dentro y fuera de tu red.',
-      explicacion: 'No garantiza que todas las aplicaciones funcionen.', orientacion: 'Prueba otra página.',
-      evidencia: [{ nombre: 'Dentro de tu red', respuestas: 3, intentos: 3, fecha: '2026-10-15T12:00:00Z' }] },
-    evidencia: [{ fecha: '2026-10-15T12:00:00Z', resultado: 'correcto', destino: 'https://example.test' }],
-    comparacion: { mensaje: 'Aún no hay suficientes comprobaciones.', reciente: { intentos: 1, no_correctos: 0 }, anterior: { intentos: 0, no_correctos: 0 } } } }
-  const pedir = vi.fn(async () => ({ ok: true, json: async () => dato }))
-  vi.stubGlobal('fetch', pedir)
-  vista = mount(Observaciones)
-  await flushPromises()
-  expect(vista.text()).toContain('Prueba abrir otra página')
-  expect(vista.text()).toContain('¿Dónde puedo empezar a revisar?')
-  expect(vista.text()).toContain('3 respuestas de 3 intentos')
-  expect(vista.findAll('details').every(d => d.attributes('open') === undefined)).toBe(true)
+test('resume diez aciertos sin registros, duplicaciones ni recomendaciones innecesarias', async () => {
+  await preparar(base())
+  expect(vista.text().split('La prueba respondió.')).toHaveLength(2)
+  expect(vista.text()).toContain('respondió en las comprobaciones realizadas')
+  expect(vista.find('ol').exists()).toBe(false)
+  for (const texto of ['Recomendación', 'Qué falta comprobar', 'Qué encontramos', 'Abre otra página.']) expect(vista.text()).not.toContain(texto)
+})
+test('ante fallo ofrece acción y verificación; recuperarse no oculta fallos recientes', async () => {
+  const datos = base()
+  datos.principal = { fuente: 'Sitio de prueba', estado: 'atencion', titulo: 'No se completó el acceso.', explicacion: 'No hubo respuesta.', orientacion: 'Abre otra página.' }
+  datos.incidencias.fallos = 2
+  await preparar(datos)
+  expect(vista.text()).toContain('2 pruebas no lograron completar el acceso al sitio de prueba')
+  expect(vista.text()).toContain('Recomendación')
+  expect(vista.text()).toContain('Abre otra página.')
+  expect(vista.text()).toContain('Después, vuelve a intentar')
+  datos.principal = { ...datos.principal, estado: 'observar', titulo: 'Respondió ahora, hubo fallos antes.' }
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(vista.text()).toContain('Respondió ahora, hubo fallos antes.')
+  expect(vista.text()).toContain('2 pruebas')
+})
+test('errores de ejecución no se presentan como pruebas de acceso fallidas', async () => {
+  const datos = base(); datos.incidencias.errores_medicion = 2
+  await preparar(datos)
+  expect(vista.text()).toContain('Algunas pruebas no pudieron realizarse')
+  expect(vista.text()).not.toContain('2 pruebas no lograron completar')
+})
+test('retira conclusiones al fallar la API y al cambiar de contexto sin muestras', async () => {
+  const datos = base(); const pedir = await preparar(datos)
   pedir.mockRejectedValueOnce(new Error('Sin servicio'))
   await vi.advanceTimersByTimeAsync(5000)
-  expect(vista.text()).not.toContain('pudo llegar a Internet')
-  expect(vista.text()).not.toContain('Hubo respuestas dentro y fuera')
-  expect(vista.text()).not.toContain('Prueba abrir otra página')
+  expect(vista.text()).not.toContain('La prueba respondió.')
   expect(vista.text()).toContain('No están llegando nuevos resultados')
   await vi.advanceTimersByTimeAsync(5000)
-  expect(vista.text()).toContain('Prueba abrir otra página')
-})
-
-
-test('explica la comparación de tiempos, distingue ausencia de datos y retira resultados al fallar', async () => {
-  vi.useFakeTimers()
-  const datos = { estado: 'sin_datos', titulo: 'Esperando la prueba web', explicacion: '', orientacion: '', limite: '', evidencia: [],
-    tiempos_respuesta: [{ nombre: 'Fuera de tu red', destino: '1.1.1.1', estado: 'comparable',
-      mensaje: 'Las respuestas tardaron más, en promedio.', orientacion: 'Comprueba si las pausas se repiten.',
-      anterior: { promedio_ms: 20, respuestas: 9, sin_respuesta: 0 }, reciente: { promedio_ms: 40, respuestas: 9, sin_respuesta: 0 } }] }
-  const pedir = vi.fn(async () => ({ ok: true, json: async () => JSON.parse(JSON.stringify({ version_esquema: 1, datos })) }))
-  vi.stubGlobal('fetch', pedir)
-  vista = mount(Observaciones)
-  await flushPromises()
-  expect(vista.text()).toContain('¿Está tardando más en responder?')
-  expect(vista.get('dl').text()).toContain('20 ms')
-  expect(vista.get('dl').text()).toContain('40 ms')
-  expect(vista.text()).toContain('No mide la rapidez de tus descargas')
-  datos.tiempos_respuesta[0].estado = 'insuficiente'
-  datos.tiempos_respuesta[0].mensaje = 'Todavía faltan comprobaciones'
-  datos.tiempos_respuesta[0].reciente.promedio_ms = null
+  expect(vista.text()).toContain('La prueba respondió.')
+  Object.assign(datos, { estado: 'sin_datos', titulo: 'Esperando pruebas de esta red.', explicacion: '', incidencias: null })
   await vi.advanceTimersByTimeAsync(5000)
-  expect(vista.find('dl').exists()).toBe(false)
-  expect(vista.text()).toContain('No disponible')
-  pedir.mockRejectedValueOnce(new Error('Sin servicio'))
-  await vi.advanceTimersByTimeAsync(5000)
-  expect(vista.text()).not.toContain('¿Está tardando más en responder?')
-  expect(vista.text()).toContain('No están llegando nuevos resultados')
+  expect(vista.text()).not.toContain('La prueba respondió.')
+  expect(vista.text()).not.toContain('últimos diez minutos')
 })
-
-
-test('prioriza una orientación, permite abrir evidencia y descarta un contrato incompleto', async () => {
-  vi.useFakeTimers()
-  const datos = { estado: 'observado', titulo: 'Título secundario', explicacion: '', orientacion: '', limite: '', evidencia: [],
-    diagnostico: { hallazgos: ['Se observaron respuestas posteriores.'], comprobar: 'Comprueba si vuelve a funcionar.', falta: 'No garantiza recuperación definitiva.' },
-    principal: { estado: 'observar', titulo: 'El sitio respondió ahora, pero hubo problemas antes.',
-      explicacion: 'Hubo dos pruebas con problemas.', orientacion: 'Comprueba si tu aplicación vuelve a funcionar.', fuente: 'Visita al sitio de prueba' },
-    incidencias: { estado: 'observado', mensaje: 'El problema se observó más de una vez.', errores_medicion: 1,
-      eventos: [{ id: 'uno', fecha: '2026-10-15T12:00:00Z', descripcion: 'El sitio respondió correctamente.', destino: 'https://example.test' }] },
-    nombres: { estado: 'sin_datos', titulo: 'Falta una búsqueda reciente', explicacion: '', orientacion: '' } }
-  const pedir = vi.fn(async () => ({ ok: true, json: async () => JSON.parse(JSON.stringify({ version_esquema: 1, datos })) }))
-  vi.stubGlobal('fetch', pedir)
-  vista = mount(Observaciones)
-  await flushPromises()
-  expect(vista.get('.resultado-principal').text()).toContain('respondió ahora')
-  expect(vista.text()).not.toContain('Título secundario')
-  expect(vista.text()).toContain('Cómo comprobar si mejora')
-  expect(vista.text()).toContain('No garantiza recuperación definitiva.')
-  expect(vista.text()).toContain('más de una vez')
-  const detalle = vista.findAll('details').find(d => d.text().includes('Ver qué pasó'))
-  expect(detalle.attributes('open')).toBeUndefined()
-  detalle.element.open = true
-  expect(detalle.get('li').text()).toContain('El sitio respondió correctamente')
-  expect(detalle.text()).toContain('No se cuentan como fallos de Internet')
+test('solo presenta comparaciones suficientes y rechaza contratos incompletos', async () => {
+  const datos = base(); datos.comparacion = { estado: 'insuficiente', mensaje: 'Faltan periodos', reciente: { intentos: 1, no_correctos: 0 }, anterior: { intentos: 0, no_correctos: 0 } }
+  await preparar(datos)
+  expect(vista.text()).not.toContain('Faltan periodos')
+  datos.comparacion.estado = 'comparable'; datos.comparacion.mensaje = 'Ahora hubo menos fallos.'
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(vista.text()).toContain('Ahora hubo menos fallos.')
   datos.incidencias.eventos = [null]
   await vi.advanceTimersByTimeAsync(5000)
   expect(vista.text()).toContain('No están llegando nuevos resultados')
-  expect(vista.text()).not.toContain('respondió ahora')
+  expect(vista.text()).not.toContain('Ahora hubo menos fallos.')
 })

@@ -1,4 +1,4 @@
-// Entradas: API artificial. Comprueba identificación, autorización y privacidad de Router.vue sin red real.
+// Entradas: API artificial. Comprueba acceso con usuario/contraseña, identificación, autorización y privacidad de Router.vue sin red real.
 import { afterEach, expect, test, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import Router from '../src/components/Router.vue'
@@ -26,10 +26,13 @@ test('envía credenciales solo al endpoint local y limpia el formulario', async 
   await flushPromises()
   await vista.get('input[maxlength="128"]').setValue('usuario artificial')
   await vista.get('input[maxlength="1024"]').setValue('contraseña artificial')
-  await vista.findAll('input[type=checkbox]')[1].setValue(true)
+  await vista.get('input[type=checkbox]').setValue(true)
   await vista.get('form').trigger('submit')
   await flushPromises()
   const [url, opciones] = consulta.mock.calls.find(([, o]) => o.method === 'POST')
+  expect(vista.text()).not.toContain('Usar una sesión existente')
+  expect(vista.find('input[maxlength="4096"]').exists()).toBe(false)
+  expect(vista.find('input[maxlength="256"]').exists()).toBe(false)
   expect(url).toBe('/api/v1/router/sesion')
   expect(JSON.parse(opciones.body)).toEqual({ usuario: 'usuario artificial', password: 'contraseña artificial', confirmado: true, id_contexto: 'A' })
   expect(vista.get('fieldset').attributes('disabled')).toBeDefined()
@@ -46,10 +49,9 @@ async function preparar() {
   vi.stubGlobal('fetch', consulta)
   vista = mount(Router)
   await flushPromises()
+  await vista.get('input[maxlength="128"]').setValue('usuario artificial')
+  await vista.get('input[type=password]').setValue('contraseña artificial')
   await vista.get('input[type=checkbox]').setValue(true)
-  await vista.findAll('input[type=password]')[0].setValue('session_id=artificial')
-  await vista.findAll('input[type=password]')[1].setValue('csrf-artificial')
-  await vista.findAll('input[type=checkbox]')[1].setValue(true)
   await vista.get('form').trigger('submit')
   await flushPromises()
   datos.autorizada = true
@@ -160,7 +162,7 @@ test('presenta cantidades parciales por conexión y las retira al perder acceso'
     intervalos_excluidos: 1, antiguedad_s: 30, ultima_fecha: new Date().toISOString() }]
   await vi.advanceTimersByTimeAsync(5000)
   expect(vista.text()).toContain('3 MB')
-  expect(vista.text()).toContain('5 segundos medidos')
+  expect(vista.text()).toContain('5 segundos observados')
   expect(vista.text()).toContain('La última lectura es antigua')
   datos.resumen_trafico[0].total_mb = null
   datos.resumen_trafico[0].intervalos_validos = 0
@@ -168,7 +170,7 @@ test('presenta cantidades parciales por conexión y las retira al perder acceso'
   expect(vista.text()).toContain('Todavía no hay dos lecturas comparables')
   consulta.mockRejectedValueOnce(new Error('Sin servicio'))
   await vi.advanceTimersByTimeAsync(5000)
-  expect(vista.text()).not.toContain('¿Cuántos datos pasaron')
+  expect(vista.text()).not.toContain('Cantidad de datos recibidos y enviados')
 })
 
 
@@ -187,7 +189,7 @@ test('un periodo común actualiza cantidades y gráficas sin repetir consultas',
   expect(vista.text()).toContain('1 MB')
   expect(vista.text()).not.toContain('3 MB')
   expect(vista.findAll('.evolucion select')[0].element.value).toBe('60')
-  expect(vista.text()).toContain('55 segundos del periodo sin medición')
+  expect(vista.text()).toContain('55 segundos sin información')
   await vista.findAll('.evolucion select')[0].setValue('300')
   expect(vista.get('[data-periodo-trafico]').element.value).toBe('300')
   expect(vista.text()).toContain('2 MB')
@@ -202,18 +204,19 @@ test('un periodo común actualiza cantidades y gráficas sin repetir consultas',
 
 test('el diagnóstico autorizado desaparece si falla la consulta o se retira el acceso', async () => {
   const { datos, consulta } = await preparar()
-  datos.diagnostico = { estado: 'insuficiente', comparaciones: [], mensaje: 'Esperando periodos compatibles.',
+  datos.series = [{ fuente: 'wan', familia_ip: 'IPv4', interfaz: 'prueba', fecha: new Date().toISOString(), antiguedad_s: 1, bajada_mbps: 2, subida_mbps: 1 }]
+  datos.diagnostico = { estado: 'comparable', comparaciones: [{ fuente: 'wan', familia_ip: 'IPv4', interfaz: 'prueba', mensaje: 'Más uso y más espera.', orientacion: 'Revisa una descarga.' }], mensaje: '',
     siguiente_paso: 'Se actualiza automáticamente.', consumo_individual: 'No disponible por dispositivo.' }
   await vi.advanceTimersByTimeAsync(5000)
-  expect(vista.text()).toContain('Esperando periodos compatibles')
+  expect(vista.text()).toContain('Más uso y más espera.')
   consulta.mockRejectedValueOnce(new Error('falló'))
   await vi.advanceTimersByTimeAsync(5000)
-  expect(vista.text()).not.toContain('Esperando periodos compatibles')
+  expect(vista.text()).not.toContain('Más uso y más espera.')
   await vi.advanceTimersByTimeAsync(5000)
-  expect(vista.text()).toContain('Esperando periodos compatibles')
+  expect(vista.text()).toContain('Más uso y más espera.')
   await vista.findAll('button').find(b => b.text() === 'Finalizar acceso de lectura').trigger('click')
   await flushPromises()
-  expect(vista.text()).not.toContain('Esperando periodos compatibles')
+  expect(vista.text()).not.toContain('Más uso y más espera.')
 })
 
 test('un router desconocido conserva la consulta general sin habilitar credenciales', async () => {
@@ -222,7 +225,35 @@ test('un router desconocido conserva la consulta general sin habilitar credencia
     gateway_candidato: '192.168.50.1', identificacion: { adaptador: null, nombre: 'Sin identificar' },
   } })))
   vista = mount(Router); await flushPromises()
-  expect(vista.text()).toContain('Conectar mi router')
+  expect(vista.text()).toContain('Añadir información del router')
   expect(vista.text()).toContain('comprobaciones generales')
   expect(vista.get('fieldset').attributes('disabled')).toBeDefined()
+})
+
+test('no ofrece consumo individual ni fusiona fuentes con la misma interfaz', async () => {
+  const { datos } = await preparar()
+  expect(vista.findAll('th').map(n => n.text())).not.toContain('Consumo')
+  expect(vista.text()).toContain('No garantiza que esté conectado ahora')
+  datos.series = ['fuente-a', 'fuente-b'].map(fuente => ({ fuente, familia_ip: 'IPv4', interfaz: 'misma',
+    antiguedad_s: 1, fecha: '2026-10-16T12:00:00Z', bajada_mbps: null, subida_mbps: null }))
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(vista.findAll('.evolucion')).toHaveLength(2)
+  expect(vista.text()).toContain('sumarlas podría contar datos dos veces')
+  expect(vista.text()).toContain('Sin intervalo válido')
+  expect(vista.text()).not.toContain('0.000 Mb/s')
+})
+
+test('omite comparaciones insuficientes, informa destino y cuenta tiempo sin prolongar la sesión', async () => {
+  const { datos } = await preparar()
+  datos.diagnostico = { estado: 'insuficiente', comparaciones: [], mensaje: 'Aún faltan mediciones compatibles.' }
+  datos.resumen_trafico = [{ fuente: 'wan', familia_ip: 'IPv4', interfaz: 'prueba', segundos_medidos: 120, segundos_sin_medicion: 480, intervalos_validos: 2 }]
+  await vi.advanceTimersByTimeAsync(5000)
+  expect(vista.text()).not.toContain('Aún faltan mediciones compatibles')
+  const identificacion = vista.get('[aria-label="Router al que se autorizará el acceso"]')
+  expect(identificacion.element.closest('details')).toBeNull()
+  expect(vista.text()).toContain('29:50')
+  expect(vista.text()).toContain('2 minutos observados')
+  expect(vista.text()).toContain('8 minutos sin información')
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(vista.text()).toContain('29:49')
 })

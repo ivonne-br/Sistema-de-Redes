@@ -1,4 +1,4 @@
-<!-- Consulta series ICMP mediante api.js/useResumen; resume respuestas y RTT, con métricas e historial desplegables calculados por Python y fallos separados. -->
+<!-- Consulta series ICMP mediante api.js/useResumen; resume respuestas y RTT, con explicación de ambos recorridos, métricas e historial desplegables calculados por Python y fallos separados. -->
 <script setup>
 import { computed, ref } from 'vue'
 import Evolucion from './Evolucion.vue'
@@ -12,7 +12,7 @@ const historial = computed(() => [...(datos.value?.historial ?? [])].reverse().f
   serie.destinos.map(fila => ({ ...fila, clave: `${serie.id_serie}-${fila.tipo}-${fila.ipv4}` }))))
 // Solo la ventana del contexto actual; un intento sin RTT mantiene un hueco.
 const evolucion = computed(() => (datos.value?.destinos ?? []).filter(d => d.ipv4).map(d => ({
-  id: `${d.tipo}-${d.ipv4}`, nombre: `${d.tipo === 'router' ? 'Dentro de tu red' : 'Hacia Internet'} · ${d.ipv4}`,
+  id: `${d.tipo}-${d.ipv4}`, nombre: d.tipo === 'router' ? 'Dentro de tu red' : 'Hacia Internet',
   puntos: (datos.value?.historial ?? []).filter(s => s.id_contexto === datos.value.id_contexto).flatMap(s =>
     s.destinos.filter(f => f.tipo === d.tipo && f.ipv4 === d.ipv4).map(f => ({ edad: s.antiguedad_s,
       fecha: f.fin, valor: medida.value === 'tiempo' ? f.rtt_ms?.promedio ?? null : f.sin_respuesta ?? null })))
@@ -29,7 +29,7 @@ function edad(valor) { return valor == null ? 'No disponible' : `${valor.toFixed
 <template>
   <section aria-labelledby="conectividad">
     <h2 id="conectividad">¿Cuánto tarda en responder?</h2>
-    <p>Es el tiempo que tarda un mensaje pequeño en ir y volver. Un tiempo menor significa una respuesta más rápida; no indica cuántos archivos puedes descargar.</p>
+    <p>Comparamos dos recorridos desde esta computadora: hasta el router de tu casa y hasta un destino en Internet, pasando por el router y el proveedor. Así podemos observar si las esperas aparecen ya en el primer tramo o también al continuar hacia Internet. No mide la rapidez de descarga.</p>
     <p v-if="datos && !datos.destinos.length">Esperando una serie de mediciones del contexto actual.</p>
     <div v-for="destino in (datos?.destinos ?? [])" :key="destino.tipo" class="resumen-destino">
       <strong>{{ destino.tipo === 'router' ? 'Hasta tu router (dentro de tu red)' : 'Hasta Internet (sitio de prueba)' }}</strong>
@@ -39,6 +39,7 @@ function edad(valor) { return valor == null ? 'No disponible' : `${valor.toFixed
         <p>{{ destino.respuestas }} respuestas de {{ destino.realizadas }} intentos. {{ destino.sin_respuesta }} sin respuesta.</p>
         <p v-if="destino.errores || destino.omitidas">La medición quedó incompleta; no podemos evaluar todos los intentos.</p>
         <p v-else-if="destino.sin_respuesta">Algunos mensajes no recibieron respuesta. Si notas cortes, revisa si vuelve a ocurrir; esta prueba por sí sola no confirma una desconexión.</p>
+        <p v-else-if="destino.respuestas > 0">Las pruebas de este grupo recibieron respuesta. Si una página sigue fallando, consulta la prueba de acceso: recibir estos mensajes no garantiza que todas las aplicaciones funcionen.</p>
       </template>
       <p class="secundario">Última serie: {{ fecha(destino.fin) }}. {{ error ? 'Sin actualizar' : destino.vigencia === 'vigente' ? 'Reciente' : 'Antigua' }}.</p>
     </div>
@@ -47,8 +48,9 @@ function edad(valor) { return valor == null ? 'No disponible' : `${valor.toFixed
       <details v-else-if="error"><summary>No llegan nuevas mediciones. Ver detalle</summary><p>{{ error }} Se reintentará automáticamente. Los resultados conservados y sus antigüedades están congelados; no describen el momento actual.</p></details>
       <p v-else-if="recuperada">Consulta de conectividad recuperada.</p>
     </div>
-    <template v-if="datos && !error">
+    <template v-if="datos && !error && datos.destinos.length">
       <p v-if="datos.destinos.some(d => d.vigencia !== 'vigente')">La gráfica contiene mediciones anteriores: no describe necesariamente este momento.</p>
+      <p>Las dos líneas representan esos recorridos. Si sube una línea, sus mensajes tardaron más en volver. Si solo cambia la de Internet, conviene revisar ese recorrido; esto por sí solo no identifica al responsable.</p>
       <label>Medición que quieres revisar <select v-model="medida"><option value="tiempo">Tiempo de respuesta</option><option value="silencios">Mensajes sin respuesta</option></select></label>
       <p v-if="medida === 'silencios'">Cuenta los mensajes que no recibieron respuesta en cada grupo de pruebas. No equivale a minutos sin Internet ni demuestra una desconexión.</p>
       <Evolucion :key="datos.id_contexto" :series="evolucion" :unidad="medida === 'tiempo' ? 'ms' : 'mensajes'" :titulo="medida === 'tiempo' ? 'Cómo cambia el tiempo de respuesta' : 'Mensajes sin respuesta en cada prueba'" preferencia="respuesta" :hueco="Math.min(90, (datos.intervalo_s ?? 30) + (datos.muestras_por_serie ?? 5) * 2 + 10)" />

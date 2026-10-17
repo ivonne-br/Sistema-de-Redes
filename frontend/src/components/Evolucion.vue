@@ -1,5 +1,5 @@
 <!-- Visualiza series ya calculadas: recibe edades, valores, fechas y unidad común.
-     No consulta fuentes ni calcula tasas. Comparte filtros y tabla accesible entre
+     Entrega una lectura en palabras antes de la gráfica opcional. No consulta fuentes ni calcula tasas. Comparte filtros y tabla accesible entre
      conectividad y router; guarda solo periodo y presentación, nunca datos o destinos. -->
 <script setup>
 import { computed, ref, watch } from 'vue'
@@ -30,6 +30,18 @@ const grupos = computed(() => props.series.filter(s => !seleccion.value || s.id 
   puntos: s.puntos.filter(p => Number.isFinite(p.edad) && p.edad >= 0 && p.edad < periodoVisible.value)
     .map(p => ({ ...p, valor: Number.isFinite(p.valor) && p.valor >= 0 ? p.valor : null }))
     .sort((a, b) => b.edad - a.edad) })))
+// Resume solo los puntos visibles: nunca sustituye una última lectura ausente por una anterior.
+const lectura = computed(() => grupos.value.map(s => {
+  const ultimo = s.puntos.at(-1)
+  const validos = s.puntos.filter(p => p.valor != null)
+  if (!ultimo || !validos.length) return { id: s.id, nombre: s.nombre, texto: 'Todavía no hay datos para explicar este periodo.' }
+  if (ultimo.valor == null) return { id: s.id, nombre: s.nombre, texto: 'La última prueba quedó sin dato. Los valores anteriores no dicen cómo está ahora.' }
+  const minimo = Math.min(...validos.map(p => p.valor)), maximo = Math.max(...validos.map(p => p.valor))
+  return { id: s.id, nombre: s.nombre, texto: `Último valor registrado: ${valor(ultimo.valor)}.`,
+    fecha: ultimo.fecha,
+    detalle: validos.length === 1 ? 'Solo hay un valor: todavía no permite observar cambios.'
+      : `En las pruebas con dato, el menor valor fue ${valor(minimo)} y el mayor fue ${valor(maximo)}. No describe lo que ocurrió entre pruebas.` }
+}))
 const maximo = computed(() => Math.max(1, ...grupos.value.flatMap(s => s.puntos.map(p => p.valor ?? 0))))
 const x = p => 40 + (1 - p.edad / periodoVisible.value) * 540
 const y = p => 170 - p.valor / maximo.value * 140
@@ -48,6 +60,21 @@ const valor = v => v == null ? 'No disponible' : `${v.toLocaleString('es-MX', { 
 <template>
   <div class="evolucion">
     <h3>{{ titulo }}</h3>
+    <div class="lectura-grafica">
+      <p v-if="unidad === 'ms'">Estos números muestran cuánto esperó un mensaje de prueba para recibir respuesta. Un valor más alto significa más espera en esa prueba; no mide la rapidez de una descarga.</p>
+      <p v-else-if="unidad === 'Mb/s'">Estos números muestran cuánto se enviaba o recibía por segundo. Un valor más alto significa más uso de Internet, no que la conexión esté peor ni que hayas alcanzado su límite.</p>
+      <p v-else-if="unidad === 'mensajes'">Estos números cuentan mensajes de prueba que no recibieron respuesta. No son minutos sin Internet: algunos equipos no contestan este tipo de prueba.</p>
+      <p>Resumen de los últimos {{ periodoVisible / 60 }} minutos disponibles al consultar.</p>
+      <div v-for="r in lectura" :key="r.id" class="resumen-destino">
+        <strong>{{ r.nombre }}</strong><p>{{ r.texto }}</p><p v-if="r.detalle">{{ r.detalle }}</p>
+        <p v-if="r.fecha" class="secundario">Registrado: {{ fecha(r.fecha) }}.</p>
+      </div>
+      <p v-if="!hayValores">No hay valores disponibles para explicar este periodo. Espera nuevas pruebas; esto no significa que Internet esté fallando.</p>
+      <p v-if="unidad === 'Mb/s'">Si notas lentitud y tienes una descarga en curso, puedes pausarla un momento y comprobar si tu aplicación mejora. Esta gráfica no identifica qué equipo usa más Internet ni confirma la causa.</p>
+      <p v-else>Si notas esperas o cortes, revisa la guía al inicio y prueba la página o aplicación que estabas usando. Un número aislado no basta para decidir si la conexión funciona bien.</p>
+    </div>
+    <details class="detalle-grafica"><summary>Ver gráfica, valores y opciones</summary>
+    <p>De izquierda a derecha se muestra el paso del tiempo. Cuanto más alto está un punto, mayor es el valor medido. Un hueco significa que no hay datos para unir esos momentos; no significa cero. La altura se ajusta a los datos: no compares alturas entre gráficas distintas.</p>
     <div class="filtros-grafica">
       <label>Periodo <select v-model="periodoVisible"><option :value="60">Último minuto</option><option :value="300">Últimos 5 minutos</option><option :value="600">Últimos 10 minutos</option></select></label>
       <label>Qué ver <select v-model="seleccion"><option value="">Todas las series</option><option v-for="s in series" :key="s.id" :value="s.id">{{ s.nombre }}</option></select></label>
@@ -77,5 +104,6 @@ const valor = v => v == null ? 'No disponible' : `${v.toLocaleString('es-MX', { 
         <template v-for="s in grupos" :key="s.id"><tr v-for="(p, i) in [...s.puntos].reverse()" :key="i"><td>{{ s.nombre }}</td><td>{{ fecha(p.fecha) }}</td><td>{{ valor(p.valor) }}</td></tr></template>
       </tbody></table>
     </div>
+    </details>
   </div>
 </template>

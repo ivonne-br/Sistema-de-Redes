@@ -1,5 +1,5 @@
 <!-- Consulta memoria protegida y conecta identificación, lectura y administración.
-     Entradas: API local y sesión del panel introducida aquí; salida: DHCP, series WAN y volumen observado en intervalos válidos.
+     Entradas: API local y usuario/contraseña del panel introducidos aquí; salida: equipos, ayuda contextual, tiempo restante, tasas y cantidades por conexión y fuente, con explicación cotidiana antes de los detalles técnicos desplegables.
      El inventario DHCP no aporta consumo individual; la vista expresa esa limitación.
      Contraseña solo durante el envío; permiso local en cookie HttpOnly de sesión,
      nunca en preferencias. Admite la clave en memoria de versiones anteriores. -->
@@ -19,15 +19,15 @@ watch(periodo, p => {
   try { localStorage.setItem('red-trafico-periodo-v1', String(p)) }
   catch { avisoPeriodo.value = 'El periodo se aplica, pero no se pudo guardar en este navegador.' }
 })
-const clave = ref(''), cookie = ref(''), csrf = ref(''), confirmado = ref(false)
+const clave = ref(''), confirmado = ref(false)
 const sesionCookie = ref(false)
 const acceso = computed(() => Boolean(clave.value || sesionCookie.value))
 let revision = 0
 let retiradaLocal = false
-const usuario = ref(''), password = ref(''), avanzado = ref(false)
+const usuario = ref(''), password = ref('')
 const pendiente = ref(false), mensaje = ref(''), vence = ref(0), ahora = ref(Date.now())
 const reloj = setInterval(() => { ahora.value = Date.now() }, 1000)
-onUnmounted(() => { clearInterval(reloj); password.value = ''; clave.value = ''; cookie.value = ''; csrf.value = '' })
+onUnmounted(() => { clearInterval(reloj); password.value = ''; clave.value = '' })
 const { respuesta, error, cargando } = useResumen(async signal => {
   const enviada = clave.value, consultaRevision = revision
   const headers = enviada ? { 'X-Router-Authorization': enviada } : {}
@@ -90,11 +90,13 @@ const etiquetas = {
 }
 function fecha(v) { return new Date(v).toLocaleString('es-MX') }
 function volumen(v) { return v == null ? 'No disponible' : `${v.toLocaleString('es-MX', { maximumFractionDigits: 3 })} MB` }
+function duracion(v) { return v == null ? 'No disponible' : v >= 60 ? `${(v / 60).toLocaleString('es-MX', { maximumFractionDigits: 1 })} minutos` : `${v.toLocaleString('es-MX', { maximumFractionDigits: 1 })} segundos` }
+const restante = computed(() => { const s = Math.max(0, Math.ceil((vence.value - ahora.value) / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` })
 function tasa(v) { return v == null ? 'Sin intervalo válido' : `${v.toFixed(3)} Mb/s` }
 async function autorizar() {
   pendiente.value = true; mensaje.value = ''
-  const cuerpo = { ...(avanzado.value ? { cookie: cookie.value, csrf: csrf.value } : { usuario: usuario.value, password: password.value }), confirmado: confirmado.value, id_contexto: datos.value?.id_contexto }
-  cookie.value = ''; csrf.value = ''; password.value = ''; confirmado.value = false
+  const cuerpo = { usuario: usuario.value, password: password.value, confirmado: confirmado.value, id_contexto: datos.value?.id_contexto }
+  password.value = ''; confirmado.value = false
   const control = new AbortController(), limite = setTimeout(() => control.abort(), 8000)
   try {
     const r = await fetch('/api/v1/router/sesion', { method: 'POST', signal: control.signal,
@@ -128,11 +130,11 @@ const grupos = computed(() => {
   if (!visible.value) return []
   const grupos = new Map()
   for (const punto of datos.value.series) {
-    const id = `${punto.familia_ip} · ${punto.interfaz}`
+    const id = JSON.stringify([punto.fuente, punto.familia_ip, punto.interfaz])
     if (!grupos.has(id)) grupos.set(id, [])
     grupos.get(id).push(punto)
   }
-  return Array.from(grupos, ([id, puntos]) => ({ id, puntos,
+  return Array.from(grupos, ([id, puntos], indice) => ({ id, puntos, nombre: `Conexión informada ${indice + 1}`,
     series: [{ id: 'bajada', nombre: 'Bajada: datos que recibes', campo: 'bajada_mbps' },
              { id: 'subida', nombre: 'Subida: datos que envías', campo: 'subida_mbps' }].map(s => ({
       id: s.id, nombre: s.nombre, puntos: puntos.map(p => ({ edad: p.antiguedad_s, fecha: p.fecha, valor: p[s.campo] }))
@@ -144,43 +146,29 @@ const grupos = computed(() => {
   <section aria-labelledby="router-titulo">
     <h2 id="router-titulo">Dispositivos y tráfico del router</h2>
     <p>Aquí puedes ver los equipos que informa tu router y cuántos datos pasan por sus conexiones de Internet.</p>
-    <p v-if="!acceso">Necesitas permiso y acceso al router para ver estos datos. Si estás en la escuela o en una red ajena, puedes usar los otros paneles sin conectar el router.</p>
-    <details><summary>¿Qué significan bajada, subida y consumo?</summary>
-      <p><strong>Bajada:</strong> datos que llegan desde Internet, por ejemplo al ver un video o descargar un juego.</p>
-      <p><strong>Subida:</strong> datos que envías a Internet, por ejemplo en una videollamada o al subir fotos.</p>
-      <p><strong>Mb/s:</strong> cantidad de datos que pasan cada segundo. Las gráficas muestran el uso observado, no la velocidad máxima de tu contrato.</p>
-      <p><strong>Consumo:</strong> cantidad acumulada durante un periodo, expresada en MB o GB. No es lo mismo que Mb/s.</p>
-      <p>Un tráfico alto no significa una red en mal estado. Para investigar lentitud hay que comprobar si coincide con respuestas más lentas o cortes; la coincidencia no demuestra la causa.</p>
-    </details>
+    <p v-if="!acceso">La lectura del router es opcional: añade sus registros de equipos y el uso de sus conexiones de Internet. Puedes entender las comprobaciones de esta computadora sin autorizarla. Consultar información no modifica la configuración.</p>
     <p v-if="cargando">Buscando el estado del recolector…</p>
     <details v-if="error"><summary>Datos del router no disponibles. Ver detalle</summary><p role="status">{{ error }} Los datos privados se ocultan mientras no se pueda verificar el acceso.</p></details>
     <p v-if="datos" role="status">{{ !acceso && ['lectura_correcta', 'verificando_compatibilidad', 'error_fuente'].includes(datos.estado) ? 'Esta vista no tiene acceso autorizado a los datos del router.' : etiquetas[datos.estado] ?? 'Lectura no disponible' }}</p>
     <p v-if="datos && !acceso && ['lectura_correcta', 'verificando_compatibilidad', 'error_fuente'].includes(datos.estado)">Hay una lectura en curso en el backend. Si pertenece a otro navegador o a una versión anterior, espera a que caduque (máximo 30 minutos desde su inicio), o finalízala desde la vista que tenga acceso.</p>
     <p v-if="datos?.etapa_error">El fallo ocurrió al {{ etapas[datos.etapa_error] ?? 'consultar el router' }}.</p>
     <p v-if="mensaje" role="status">{{ mensaje }}</p>
-    <details v-if="datos?.gateway_candidato"><summary>Identificación y dirección del router</summary><p>{{ datos.identificacion?.nombre ?? 'Comprobando el panel…' }}</p><p>Puerta de enlace candidata: <strong>{{ datos.gateway_candidato }}</strong>. Esa dirección por sí sola no identifica el modelo.</p></details>
+    <aside v-if="datos?.gateway_candidato" aria-label="Router al que se autorizará el acceso"><h3>Router al que vas a acceder</h3><p>{{ datos.identificacion?.nombre ?? 'Comprobando el panel…' }}</p><p>Dirección del panel: <strong>{{ datos.gateway_candidato }}</strong>. Es la dirección de su panel en tu red.</p></aside>
     <p v-if="acceso && datos?.etapa_error">La sesión temporal se conserva; se volverá a intentar la consulta de lectura, sin reenviar la contraseña. Puedes finalizar el acceso.</p>
     <button v-if="acceso" type="button" @click="cerrar">Finalizar acceso de lectura</button>
-    <p v-if="acceso && ahora < vence">Acceso de lectura: quedan aproximadamente {{ Math.ceil((vence - ahora) / 60000) }} minutos. Cambiar de red retira el permiso.</p>
+    <p v-if="acceso && ahora < vence">Acceso de lectura: tiempo restante <strong>{{ restante }}</strong> (minutos:segundos). Cambiar de red retira el permiso.</p>
     <p v-if="acceso && ahora >= vence">Acceso caducado: datos ocultos.</p>
     <details v-if="datos?.gateway_candidato && !error">
-      <summary>Conectar mi router</summary>
+      <summary>Añadir información del router · lectura opcional</summary>
       <p v-if="datos.identificacion && !datos.identificacion.adaptador">Todavía no reconocemos este panel. Puedes seguir usando las comprobaciones generales. Para investigar compatibilidad, consulta el modelo y la versión en el panel o la etiqueta del equipo; no compartas contraseñas ni el número de serie.</p>
-      <p>Usa el usuario de administración con el que entras al panel del router; no el nombre de la red Wi-Fi.</p>
+      <p>Busca los datos de acceso al panel en la etiqueta o documentación del router, si allí se indican. Si fueron cambiados, consulta a quien administra tu red o a tu proveedor. La contraseña Wi-Fi puede ser distinta; no la supongas ni restablezcas el router para probar.</p>
       <p>Introduce el usuario y la contraseña del panel del router. Se realizará un solo intento; si falla, revisa el mensaje antes de volver a autorizar.</p>
       <p>Los valores se introducen solo aquí y se conservan en memoria durante un máximo de 30 minutos. El router observado usa HTTP: el envío al router no está cifrado. Este permiso inicia sesión y consulta las tablas. Los cambios requieren autorizar después la administración y confirmar cada operación. La contraseña se descarta tras el intento.</p>
-      <p>El permiso local se conserva al recargar mediante una cookie de sesión HttpOnly, sin guardar la contraseña. Se comparte entre las pestañas de este perfil del navegador en la misma dirección local y caduca a los 30 minutos, aunque recargues. Usa «Finalizar acceso de lectura» para volver a la consulta como invitado y retirar también cualquier permiso administrativo.</p>
-      <label><input v-model="avanzado" type="checkbox" /> Usar una sesión existente (avanzado)</label>
+      <p>Puedes recargar la página sin volver a introducir la contraseña mientras dure el permiso. Se comparte entre las pestañas de este perfil del navegador en la misma dirección local y caduca a los 30 minutos, aunque recargues. Usa «Finalizar acceso de lectura» para volver a la consulta como invitado y retirar también cualquier permiso administrativo.</p>
       <form @submit.prevent="autorizar">
         <fieldset :disabled="pendiente || acceso || !datos.identificacion?.adaptador">
-        <template v-if="!avanzado">
           <label>Usuario del router <input v-model="usuario" autocomplete="off" maxlength="128" required /></label>
           <label>Contraseña del router <input v-model="password" type="password" autocomplete="off" maxlength="1024" required /></label>
-        </template>
-        <template v-else>
-        <label>Cookie de la sesión del panel <input v-model="cookie" type="password" autocomplete="off" maxlength="4096" required /></label>
-        <label>Token CSRF del panel <input v-model="csrf" type="password" autocomplete="off" maxlength="256" required /></label>
-        </template>
         <label><input v-model="confirmado" type="checkbox" required /> Confirmo que tengo autorización para acceder al router identificado en {{ datos.gateway_candidato }} y autorizo su lectura temporal.</label>
         <button type="submit">{{ pendiente || acceso ? 'Acceso solicitado' : 'Iniciar lectura automática' }}</button>
         </fieldset>
@@ -189,64 +177,60 @@ const grupos = computed(() => {
     </details>
     <template v-if="visible">
       <AdministracionRouter :clave="clave" :contexto="datos.id_contexto" :estado="datos.administracion" />
-      <div v-if="datos.diagnostico">
-        <h3>¿El uso de Internet coincide con respuestas más lentas?</h3>
-        <p>{{ datos.diagnostico.mensaje }}</p><p>{{ datos.diagnostico.siguiente_paso }}</p>
-        <article v-for="r in datos.diagnostico.comparaciones" :key="`${r.fuente}-${r.interfaz}`" class="resumen-destino">
-          <h4>{{ r.familia_ip }} · {{ r.interfaz }}</h4><p>{{ r.mensaje }}</p>
-          <p>Qué puedes revisar: {{ r.orientacion }}</p><p>Cómo comprobar si mejora: {{ r.comprobar }}</p>
-          <details><summary>Ver la comparación</summary>
-            <p>Tráfico promedio de subida y bajada juntos: antes {{ tasa(r.anterior.mbps) }}; últimos cinco minutos {{ tasa(r.reciente.mbps) }}.</p>
-            <p>Tiempo de tráfico medido: antes {{ r.anterior.segundos }} s; después {{ r.reciente.segundos }} s, de 300 s en cada periodo.</p>
-            <p v-if="r.acceso">Acceso al sitio de prueba: {{ r.acceso.mensaje }}</p>
-            <p v-for="t in r.respuestas" :key="t.destino">{{ t.nombre }}: antes {{ t.anterior.promedio_ms }} ms; después {{ t.reciente.promedio_ms }} ms.</p>
-          </details>
-        </article>
-        <p>{{ datos.diagnostico.consumo_individual }}</p>
-      </div>
       <label>Periodo para cantidades y gráficas <select v-model="periodo" data-periodo-trafico><option :value="60">Último minuto</option><option :value="300">Últimos 5 minutos</option><option :value="600">Últimos 10 minutos</option></select></label>
       <p v-if="avisoPeriodo" role="status">{{ avisoPeriodo }}</p>
       <p v-if="!cantidades.length">No hay cantidades disponibles para este periodo. Espera lecturas comparables; la ausencia de datos no significa consumo cero.</p>
-      <div v-if="cantidades.length">
-        <h3>¿Cuántos datos pasaron por las conexiones del router?</h3>
+      <details v-if="cantidades.length"><summary>Cantidad de datos recibidos y enviados</summary>
+        <p>Sirve para conocer cuántos datos se transfirieron durante el tiempo observado; no indica por sí solo si Internet funciona bien.</p>
         <p>Sumamos los datos recibidos y enviados en los intervalos completos medidos del periodo elegido ({{ periodo / 60 }} minutos). Si faltan lecturas, la cantidad es parcial: no estimamos lo que ocurrió durante esos huecos.</p>
         <article v-for="r in cantidades" :key="`${r.fuente}-${r.familia_ip}-${r.interfaz}`" class="resumen-destino">
-          <h4>{{ r.familia_ip }} · {{ r.interfaz }}</h4>
+          <h4>Cantidad observada en esta conexión</h4>
           <dl class="indicadores">
             <div><dt>Recibido (bajada)</dt><dd>{{ volumen(r.recibidos_mb) }}</dd></div>
             <div><dt>Enviado (subida)</dt><dd>{{ volumen(r.enviados_mb) }}</dd></div>
             <div><dt>Total observado en esta conexión</dt><dd>{{ volumen(r.total_mb) }}</dd></div>
           </dl>
-          <p>{{ r.segundos_medidos }} segundos medidos en {{ r.intervalos_validos }} intervalos válidos. No representa necesariamente todo el periodo elegido.</p>
-          <p v-if="r.segundos_sin_medicion != null">{{ r.segundos_sin_medicion }} segundos del periodo sin medición utilizable. No sabemos cuántos datos pasaron durante ese tiempo.</p>
+          <p>{{ duracion(r.segundos_medidos) }} observados. No representa necesariamente todo el periodo elegido.</p>
+          <p v-if="r.segundos_sin_medicion != null">{{ duracion(r.segundos_sin_medicion) }} sin información. No sabemos cuántos datos pasaron durante ese tiempo.</p>
           <p v-if="!r.intervalos_validos">Todavía no hay dos lecturas comparables para calcular una cantidad. No significa consumo cero.</p>
           <p v-if="r.antiguedad_s > 20">La última lectura es antigua; estas cantidades no incluyen lo que haya ocurrido después.</p>
           <p>Última lectura: {{ fecha(r.ultima_fecha) }}.</p>
-          <details><summary>Cómo se obtuvo esta cantidad</summary><p>Fuente: {{ r.fuente }}. {{ r.intervalos_excluidos }} puntos no aportaron un intervalo completo válido dentro del periodo. Pueden corresponder al inicio, a una pausa, a contadores reiniciados o al límite del periodo.</p><p>1 MB equivale a 1.000.000 de bytes. Es una cantidad de datos; Mb/s indica cuántos pasan por segundo.</p></details>
+
         </article>
-        <p>No sumamos las conexiones ni IPv4 e IPv6 entre sí: todavía falta comprobar su alcance. Estas cantidades no identifican cuánto consumió cada equipo ni demuestran saturación.</p>
-      </div>
-      <p>Fuente: tablas del panel Sercomm con formato comprobado. No se ha verificado automáticamente su modelo ni firmware. IPv4 e IPv6 se mantienen separados; el alcance exacto del tráfico de la interfaz sigue por comprobar.</p>
+
+      </details>
+      <p>Mostramos cada conexión informada por separado. Podrían incluir parte del mismo tráfico: sumarlas podría contar datos dos veces. No representan necesariamente cables o servicios distintos.</p>
+
       <template v-if="inventario">
-        <h3>Inventario DHCP informado</h3>
+        <h3>Equipos informados por el router</h3>
         <p>Leído: {{ fecha(inventario.fecha) }} · {{ inventario.vigencia }} · {{ inventario.recuento.total }} registros, {{ inventario.recuento.activo }} activos, {{ inventario.recuento.inactivo }} inactivos, {{ inventario.recuento.estado_desconocido }} desconocidos.</p>
         <p v-if="inventario.ultimo_intento === 'error'">Falló la última lectura DHCP; esta tabla conserva su fecha anterior.</p>
-        <p id="estado-equipos-router">«Activo» es el estado informado por el router en su registro de direcciones. No garantiza que el equipo esté conectado en este instante.</p>
+        <p id="estado-equipos-router">«Activo» significa que el router mantiene un registro de dirección para ese equipo. No garantiza que esté conectado ahora.</p>
+        <p id="limite-consumo-dhcp">Esta fuente no permite saber cuánto consume cada equipo. El uso de las conexiones del router no se puede repartir entre los equipos de esta lista.</p>
         <label>Buscar equipo por nombre o dirección <input v-model="buscarEquipo" type="search" autocomplete="off" /></label>
         <p>{{ equiposVisibles.length }} registros coinciden con la búsqueda.</p>
         <p v-if="!equiposVisibles.length">No hay coincidencias en la tabla recibida. Esto no demuestra que un equipo esté desconectado.</p>
-        <div class="tabla-router" tabindex="0" role="region" aria-label="Equipos informados por el router"><table aria-describedby="estado-equipos-router"><thead><tr><th>Nombre</th><th>IP</th><th>MAC</th><th>Conexión</th><th>Estado informado</th></tr></thead>
+        <div class="tabla-router" tabindex="0" role="region" aria-label="Equipos informados por el router"><table aria-describedby="estado-equipos-router limite-consumo-dhcp"><thead><tr><th>Nombre</th><th>IP</th><th>MAC</th><th>Conexión</th><th>Estado informado</th></tr></thead>
           <tbody><tr v-for="e in equiposVisibles" :key="`${e.ipv4}-${e.mac}`"><td>{{ e.nombre ?? 'Sin nombre' }}</td><td>{{ e.ipv4 }}</td><td>{{ e.mac }}</td><td>{{ e.conexion_original }}</td><td>{{ e.estado_original ?? `Desconocido (${e.codigo_estado_original})` }}</td></tr></tbody>
         </table></div>
       </template>
       <p v-else>Inventario todavía no disponible.</p>
+      <p v-if="!grupos.length">Todavía no hay mediciones de uso. Para calcular una tasa hacen falta dos lecturas compatibles; la ausencia de datos no significa uso cero.</p>
       <article v-for="g in grupos" :key="`${datos.id_contexto}-${g.id}`">
-        <h3>Tráfico WAN · {{ g.id }}</h3>
+        <h3>{{ g.nombre }}</h3>
+        <p>El router entrega el uso en grupos separados. Cada gráfica muestra uno de esos grupos, no un equipo ni una segunda prueba de velocidad.</p>
+        <p>Úsala para ubicar momentos con más actividad y compararlos con la hora en que notaste una espera.</p>
+        <details><summary>¿Qué es bajada y subida?</summary><p>Bajada: datos que recibes, como al ver un video. Subida: datos que envías, como al compartir fotos. Mb/s indica cuántos pasan por segundo; no es la velocidad máxima de tu contrato.</p></details>
+        <template v-for="r in (datos.diagnostico?.comparaciones ?? []).filter(r => r.fuente === g.puntos[0].fuente && r.familia_ip === g.puntos[0].familia_ip && r.interfaz === g.puntos[0].interfaz)" :key="r.fuente">
+          <p>{{ r.mensaje }} Que dos cambios coincidan no demuestra que uno cause el otro.</p>
+          <p>{{ r.orientacion }}</p>
+        </template>
+
         <p>Última muestra: {{ fecha(g.puntos.at(-1).fecha) }}. Bajada: {{ tasa(g.puntos.at(-1).bajada_mbps) }} · Subida: {{ tasa(g.puntos.at(-1).subida_mbps) }}.</p>
         <p v-if="g.puntos.at(-1).antiguedad_s > 20">Muestra desactualizada.</p>
-        <Evolucion v-model:periodo="periodo" :series="g.series" unidad="Mb/s" :titulo="`Uso observado · ${g.id}`" preferencia="trafico" :hueco="20" />
+        <Evolucion v-model:periodo="periodo" :series="g.series" unidad="Mb/s" :titulo="`Uso observado · ${g.nombre}`" preferencia="trafico" :hueco="20" />
       </article>
-      <p>Sin consumo por dispositivo. Las tasas son promedios entre lecturas, no la capacidad contratada. La gráfica sitúa cada tasa al terminar su intervalo; las cantidades solo suman intervalos completos dentro del periodo. Un punto junto al inicio puede quedar fuera de esa suma.</p>
+
     </template>
   </section>
 </template>
