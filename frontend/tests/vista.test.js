@@ -1,4 +1,4 @@
-// Recibe HTTP simulado y acciones de pantalla; comprueba recuperación, cierre
+// Recibe HTTP simulado y acciones de pantalla; comprueba guía concisa, recuperación, cierre
 // confirmado del iniciador y separación respecto de los permisos del router.
 import { afterEach, expect, test, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
@@ -30,7 +30,7 @@ test('integra fuentes públicas y router sin autorizar ni consultar ARP al abrir
   vista = mount(App)
   await flushPromises()
   await vi.advanceTimersByTimeAsync(5000)
-  expect(vista.findAll('h2').map(n => n.text())).toEqual(['Estado de la aplicación', 'Qué está pasando y qué puedes hacer', '¿Hay acceso a Internet?', '¿Cuánto tarda en responder?', 'Dispositivos y tráfico del router'])
+  expect(vista.findAll('h2').map(n => n.text())).toEqual(['¿Puedo navegar?', '¿Hay acceso a Internet?', '¿Cuánto tarda en responder?', 'Dispositivos y tráfico del router'])
   for (const ruta of ['/api/v1/observaciones', '/api/v1/estado', '/api/v1/web', '/api/v1/conectividad', '/api/v1/router']) {
     expect(consulta.mock.calls.filter(([r]) => r === ruta)).toHaveLength(2)
   }
@@ -68,10 +68,10 @@ test('backend inaccesible ofrece recuperación sin diagnosticar caída de Intern
   await flushPromises()
   expect(vista.text()).toContain('Esto no demuestra una caída de Internet')
   expect(vista.text()).not.toContain('Sí: esta computadora pudo comunicarse')
-  expect(vista.text()).toContain('python -B -m backend servir-api')
+  expect(vista.text()).toContain('Abre «Iniciar Red.command»')
   consulta.mockImplementation(async ruta => ok(fuentes(ruta)))
   await vi.advanceTimersByTimeAsync(5000)
-  expect(vista.text()).toContain('Comunicación con el servicio de medición recuperada')
+  expect(vista.text()).not.toContain('No se puede consultar la aplicación')
   expect(vista.text()).toContain('Sí: esta computadora pudo comunicarse')
 })
 
@@ -162,4 +162,21 @@ test('un servicio abierto por separado no ofrece cierre y un cierre fallido no s
   expect(vista.text()).toContain('No pudimos confirmar el cierre')
   await vi.advanceTimersByTimeAsync(15000)
   expect(consulta.mock.calls.filter(([r]) => r === '/api/v1/cierre')).toHaveLength(1)
+})
+
+test('un router que tarda no bloquea la guía ni la prueba web', async () => {
+  vi.useFakeTimers()
+  vi.stubGlobal('fetch', vi.fn((ruta, opciones) => {
+    if (ruta === '/api/v1/router') return new Promise((_, reject) => {
+      opciones.signal.addEventListener('abort', () => reject(new DOMException('Cancelada', 'AbortError')))
+    })
+    return Promise.resolve(ok(fuentes(ruta)))
+  }))
+  vista = mount(App)
+  await flushPromises()
+  expect(vista.get('[data-panel=observaciones]').text()).toContain('Esperando resultados')
+  expect(vista.get('[data-panel=internet]').text()).toContain('Sí: esta computadora pudo comunicarse')
+  await vi.advanceTimersByTimeAsync(8000)
+  expect(vista.get('[data-panel=internet]').text()).toContain('Sí: esta computadora pudo comunicarse')
+  expect(vista.get('[data-panel=equipos]').text()).toContain('Datos del router no disponibles')
 })

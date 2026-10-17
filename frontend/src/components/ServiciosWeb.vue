@@ -1,4 +1,4 @@
-<!-- Recibe resultados DNS/HTTPS de api.js mediante useResumen; presenta evidencia de acceso y detalles desplegables con fechas y fallos, sin calcular salud global. -->
+<!-- Recibe resultados DNS/HTTPS de api.js mediante useResumen; presenta evidencia de acceso y detalles desplegables con fechas y fallos, sin calcular salud global; distingue un fallo de ejecución de una prueba de acceso fallida. -->
 <script setup>
 import { computed } from 'vue'
 import { consultarWeb } from '../api.js'
@@ -12,6 +12,7 @@ const acceso = computed(() => {
   const https = datos.value?.resultados.find(f => f.tipo === 'https')
   if (!https) return 'Esperando la primera comprobación de acceso a Internet.'
   if (https.vigencia !== 'vigente') return 'La última comprobación es antigua; falta una medición reciente.'
+  if (https.estado === 'error_medicion') return 'La aplicación no pudo realizar la prueba. No permite saber si puedes navegar.'
   return https.estado === 'correcto'
     ? 'Sí: esta computadora pudo comunicarse con el sitio de prueba.'
     : 'No pudimos comunicarnos con el sitio de prueba. No confirma una caída de todo Internet.'
@@ -34,7 +35,7 @@ function numero(valor, unidad) { return valor == null ? 'No disponible' : `${val
     <h2 id="servicios-web">¿Hay acceso a Internet?</h2>
     <p class="resultado-principal">{{ acceso }}</p>
     <p>Esto comprueba un sitio de Internet; no garantiza que todas las páginas o aplicaciones funcionen.</p>
-    <p v-if="!error && datos?.resultados.some(f => f.tipo === 'https' && f.vigencia === 'vigente' && f.estado !== 'correcto')">Prueba abrir una página conocida. Si solo falla una aplicación, el problema podría estar en ese servicio. En una red escolar puede hacer falta iniciar sesión en su portal.</p>
+    <p v-if="!error && datos?.resultados.some(f => f.tipo === 'https' && f.vigencia === 'vigente' && !['correcto', 'error_medicion'].includes(f.estado))">Prueba abrir una página conocida. Si solo falla una aplicación, el problema podría estar en ese servicio. En una red escolar puede hacer falta iniciar sesión en su portal.</p>
     <p v-for="fila in (datos?.resultados ?? [])" :key="fila.tipo" class="secundario">
       {{ fila.tipo === 'dns' ? 'Buscar la dirección del sitio' : 'Contactar con el sitio' }} · {{ fecha(fila.fin) }} · {{ error ? 'Sin actualizar' : fila.vigencia === 'vigente' ? 'Reciente' : 'Antiguo' }} · {{ resultados[fila.estado] ?? fila.estado }}
     </p>

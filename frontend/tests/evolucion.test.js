@@ -60,3 +60,20 @@ test('el periodo externo filtra la gráfica y el restablecimiento avisa al padre
   await vista.get('button').trigger('click')
   expect(vista.emitted('update:periodo').at(-1)).toEqual([300])
 })
+
+test('explica la gráfica antes de abrirla y no presenta una lectura ausente como actual', async () => {
+  vista = crear()
+  expect(vista.get('.detalle-grafica').attributes('open')).toBeUndefined()
+  expect(vista.get('.lectura-grafica').text()).toContain('más espera en esa prueba')
+  expect(vista.get('.lectura-grafica').text()).toContain('menor valor fue 0 ms')
+  expect(vista.get('.lectura-grafica').text()).toContain('mayor fue 4 ms')
+  await vista.setProps({ series: [{ id: 'a', nombre: 'Otra medición', puntos: [
+    { edad: 20, valor: 4 }, { edad: 10, valor: null },
+  ] }] })
+  expect(vista.get('.lectura-grafica').text()).toContain('La última prueba quedó sin dato')
+  expect(vista.get('.lectura-grafica').text()).not.toContain('Último valor registrado: 4')
+  await vista.setProps({ unidad: 'Mb/s', series: [{ id: 'a', nombre: 'Bajada', puntos: [{ edad: 5, valor: 0 }] }] })
+  expect(vista.get('.lectura-grafica').text()).toContain('no que la conexión esté peor')
+  expect(vista.get('.lectura-grafica').text()).toContain('Último valor registrado: 0 Mb/s')
+  expect(vista.get('.lectura-grafica').text()).toContain('Solo hay un valor')
+})

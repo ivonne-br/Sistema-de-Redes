@@ -1,4 +1,4 @@
-/* Presentación del resumen integrado y sus tablas: navegación, paneles adaptables y foco de teclado; sin alterar datos ni permisos. */
+/* Presentación del resumen integrado y sus tablas: navegación, paneles adaptables y foco de teclado; recibe clases de Vue y produce una guía legible y paneles adaptables, sin alterar datos ni permisos. */
 :root { font-family: system-ui, sans-serif; color: #172c37; background: #f1f5f6; line-height: 1.6; }
 * { box-sizing: border-box; }
 body { margin: 0; }
@@ -71,3 +71,12 @@ section, [id] { scroll-margin-top: 16px; }
 .evolucion svg { display: block; width: 100%; min-height: 160px; }
 .evolucion svg text { fill: #172c37; font-size: 13px; }
 .evolucion { min-width: 0; }
+
+/* La guía mantiene el orden de lectura; en pantallas estrechas cada paso ocupa una fila. */
+.guia-principal section { border-top: 4px solid #006c85; }
+.guia-principal > p { margin-top: -10px; }
+.pasos-conexion { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 28px; }
+.pasos-conexion > div { min-width: 0; border-top: 1px solid #d5dfe3; }
+.pasos-conexion h3 { font-size: 1.05rem; }
+.servicio-apoyo { margin: 24px 0; padding: 16px; border: 1px solid #cbd9de; border-radius: 8px; }
+@media (max-width: 700px) { .pasos-conexion { grid-template-columns: 1fr; } }

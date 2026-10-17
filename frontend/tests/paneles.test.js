@@ -100,3 +100,20 @@ test('altura accesible se guarda, vuelve al recargar y se restablece', async () 
   await vista.findAll('button').find(b => b.text() === 'Restablecer distribución').trigger('click')
   expect(vista.get('#panel-a').classes()).toContain('alto-automatico')
 })
+
+test('la guía esencial ignora ocultación y altura guardadas sin borrar preferencias', async () => {
+  const previo = [{ id: 'b', visible: true, ancho: 'medio', alto: 'automatico' },
+    { id: 'a', visible: false, ancho: 'medio', alto: 'compacto' }]
+  localStorage.setItem('red-paneles-v1', JSON.stringify(previo))
+  vista = mount(Paneles, { props: { catalogo: [{ ...catalogo[0], esencial: true }, catalogo[1]],
+    vistas: [{ id: 'b', titulo: 'Solo apoyo', paneles: ['b'] }] },
+    slots: { a: '<p>Guía esencial</p>', b: '<p>Apoyo</p>' } })
+  expect(vista.findAll('[data-panel]').map(p => p.attributes('data-panel'))).toEqual(['a', 'b'])
+  expect(vista.get('[data-panel=a]').isVisible()).toBe(true)
+  expect(vista.get('#panel-a').classes()).not.toContain('alto-compacto')
+  expect(JSON.parse(localStorage.getItem('red-paneles-v1'))).toEqual(previo)
+  await vista.get('[aria-controls=opciones-paneles]').trigger('click')
+  await vista.findAll('button').find(b => b.text() === 'Solo apoyo').trigger('click')
+  expect(vista.get('[data-panel=a]').isVisible()).toBe(true)
+  expect(JSON.parse(localStorage.getItem('red-paneles-v1'))[1]).toEqual(previo[1])
+})

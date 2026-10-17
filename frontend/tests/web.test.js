@@ -160,3 +160,13 @@ test('recuentos separados por estado no implican recuperación permanente y se s
   await vi.advanceTimersByTimeAsync(5000)
   expect(vista.find('.resumen-web').exists()).toBe(false)
 })
+
+test('un error al ejecutar la prueba no se presenta como fallo del sitio', async () => {
+  const dato = base()
+  dato.datos.resultados[1].estado = 'error_medicion'
+  vi.stubGlobal('fetch', vi.fn(async () => ok(dato)))
+  vista = mount(ServiciosWeb)
+  await flushPromises()
+  expect(vista.get('.resultado-principal').text()).toContain('La aplicación no pudo realizar la prueba')
+  expect(vista.get('.resultado-principal').text()).not.toContain('No pudimos comunicarnos')
+})

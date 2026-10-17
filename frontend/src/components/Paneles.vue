@@ -1,6 +1,6 @@
 <!-- Organiza paneles recibidos como slots, sin consultar datos ni manejar sesiones.
      Entrada: catálogo de identificadores/títulos. Salida: orden, ancho, altura, navegación y visibilidad;
-     guarda solo esas preferencias en el navegador y mantiene los componentes montados. -->
+     guarda solo esas preferencias en el navegador y mantiene los componentes montados. Los paneles esenciales se muestran primero y completos sin sobrescribir sus preferencias anteriores. -->
 <script setup>
 import { computed, nextTick, ref, watch } from 'vue'
 const props = defineProps({ catalogo: { type: Array, required: true }, vistas: { type: Array, default: () => [] } })
@@ -21,7 +21,10 @@ function leer() {
   } catch { return inicial() }
 }
 const paneles = ref(leer())
-const visibles = computed(() => paneles.value.filter(p => p.visible))
+const esencial = id => props.catalogo.some(p => p.id === id && p.esencial)
+const ajustables = computed(() => paneles.value.filter(p => !esencial(p.id)))
+const fijos = computed(() => paneles.value.filter(p => esencial(p.id)))
+const visibles = computed(() => ajustables.value.filter(p => p.visible))
 const titulo = id => props.catalogo.find(p => p.id === id)?.titulo
 watch(paneles, valor => {
   try { localStorage.setItem(almacenamiento, JSON.stringify(valor.map(({ id, visible, ancho, alto }) => ({ id, visible, ancho, alto })))) }
@@ -47,13 +50,13 @@ function iniciar(evento, id) {
 }
 function soltar(id) { if (editando.value && arrastrado) mover(arrastrado, id); arrastrado = null }
 function aplicarVista(vista) {
-  paneles.value = paneles.value.map(p => ({ ...p, visible: vista.paneles.includes(p.id) }))
+  paneles.value = paneles.value.map(p => esencial(p.id) ? p : ({ ...p, visible: vista.paneles.includes(p.id) }))
   mensaje.value = `Vista «${vista.titulo}» aplicada. Conservamos el orden y los tamaños.`
 }
 async function ir(id) {
   const panel = paneles.value.find(p => p.id === id)
   if (!panel) return
-  panel.visible = true
+  if (!esencial(id)) panel.visible = true
   await nextTick()
   const destino = document.getElementById(`panel-${id}`)
   destino?.focus({ preventScroll: true })
@@ -63,6 +66,10 @@ async function ir(id) {
 function restablecer() { paneles.value = inicial(); mensaje.value = 'Distribución inicial restablecida.' }
 </script>
 <template>
+  <div v-for="p in fijos" :key="p.id" :data-panel="p.id" class="guia-principal">
+    <div :id="`panel-${p.id}`" tabindex="0" role="region" :aria-label="titulo(p.id)"><slot :name="p.id" /></div>
+    <p class="secundario">Esta guía permanece visible. Puedes organizar los paneles de apoyo sin perder las respuestas principales.</p>
+  </div>
   <nav aria-label="Ir a la información de tu red" class="accesos-paneles">
     <button v-for="p in catalogo" :key="p.id" type="button" @click="ir(p.id)">{{ p.pregunta ?? p.titulo }}</button>
   </nav>
@@ -74,14 +81,14 @@ function restablecer() { paneles.value = inicial(); mensaje.value = 'Distribuci�
       <button v-for="vista in vistas" :key="vista.id" type="button" @click="aplicarVista(vista)">{{ vista.titulo }}</button>
       <p>Solo cambia qué paneles se ven. Puedes volver a añadir cualquiera abajo.</p>
     </fieldset>
-    <label v-for="p in paneles" :key="p.id"><input type="checkbox" v-model="p.visible" /> Mostrar {{ titulo(p.id) }}<span class="secundario ayuda-panel">{{ catalogo.find(c => c.id === p.id)?.descripcion }}</span></label>
+    <label v-for="p in ajustables" :key="p.id"><input type="checkbox" v-model="p.visible" /> Mostrar {{ titulo(p.id) }}<span class="secundario ayuda-panel">{{ catalogo.find(c => c.id === p.id)?.descripcion }}</span></label>
     <button type="button" @click="restablecer">Restablecer distribución</button>
     <p class="secundario">Se guarda solo la distribución en este navegador, sin mediciones ni credenciales. Ocultar un panel no detiene las comprobaciones ni finaliza el acceso al router.</p>
   </div>
   <p role="status" aria-live="polite">{{ mensaje }}</p>
-  <p v-if="!visibles.length">No hay paneles visibles. Usa «Organizar mis paneles» para añadirlos.</p>
+  <p v-if="!visibles.length">No hay paneles de apoyo visibles. Usa «Organizar mis paneles» para añadirlos.</p>
   <div class="tablero">
-    <div v-for="p in paneles" :key="p.id" v-show="p.visible" :data-panel="p.id" :class="['panel', { completo: p.ancho === 'completo' }]"
+    <div v-for="p in ajustables" :key="p.id" v-show="p.visible" :data-panel="p.id" :class="['panel', { completo: p.ancho === 'completo' }]"
       @dragover.prevent @drop.prevent="soltar(p.id)">
       <div v-if="editando" class="controles-panel">
         <button type="button" draggable="true" @dragstart="iniciar($event, p.id)" @dragend="arrastrado = null" :aria-label="`Mover ${titulo(p.id)}`">Mover {{ titulo(p.id) }}</button>
