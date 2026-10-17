@@ -1,6 +1,7 @@
 """Sirve consultas de monitores y autorización temporal del router.
 
-Entradas: HTTP local validado, dashboard compilado opcional y credenciales explícitas.
+Entradas: HTTP local validado, dashboard y decisiones explícitas. Administración
+delega permisos, confirmaciones y verificación al monitor; no registra secretos.
 Salidas: JSON, archivos públicos de Vue y cookie HttpOnly; inicio verifica identidad
 y disponibilidad sin consultar la red. El cierre confirmado solo llama al iniciador
 propietario; el monitor conserva permisos y caducidad del router por separado.
@@ -150,6 +151,9 @@ class _Peticion(BaseHTTPRequestHandler):
         if self.path == '/api/v1/cierre':
             self._cerrar_aplicacion()
             return
+        if self.path.startswith('/api/v1/router/administracion/'):
+            self._administrar_router()
+            return
         if self.path != '/api/v1/router/sesion':
             self._solo_lectura()
             return
@@ -178,6 +182,41 @@ class _Peticion(BaseHTTPRequestHandler):
             self._json(201, {'version_esquema': 1, 'sesion': 'cookie'}, cookie=self._cookie_router(clave))
         else:
             self._json(201, {'version_esquema': 1, 'clave': clave})
+
+    def _administrar_router(self):
+        """Solicitudes explícitas del mismo origen; cuerpo acotado y sesión privada."""
+        accion = self.path.removeprefix('/api/v1/router/administracion/')
+        if accion not in {'autorizar', 'finalizar', 'consultar', 'preparar', 'confirmar', 'cancelar', 'verificar'}:
+            self._error(404, 'accion_desconocida', 'Operación no disponible.')
+            return
+        monitor = self.server.aplicacion.router
+        if monitor is None:
+            self._error(503, 'router_desactivado', 'El recolector del router no está iniciado.')
+            return
+        try:
+            if (self.headers.get('Origin') is None
+                    or self.headers.get_all('X-Red-Accion', []) != ['administrar-router']
+                    or self.headers.get('Content-Type') != 'application/json'
+                    or self.headers.get('Transfer-Encoding') is not None
+                    or len(self.headers.get_all('Content-Length', [])) != 1):
+                raise ValueError('Usa el formulario de administración de la aplicación.')
+            longitud = int(self.headers['Content-Length'])
+            if not 0 < longitud <= 4096:
+                raise ValueError('Solicitud demasiado grande o vacía.')
+            datos = json.loads(self.rfile.read(longitud))
+            if not isinstance(datos, dict) or (accion in {'finalizar', 'consultar', 'cancelar', 'verificar'} and datos):
+                raise ValueError('Solicitud no compatible.')
+            resultado = monitor.administrar(self._clave_router(), accion, datos)
+        except PermissionError:
+            self._error(401, 'sin_autorizacion', 'El permiso no está vigente o la sesión no es administrativa. Conecta el router y autoriza de nuevo.')
+            return
+        except (ValueError, UnicodeError, RecursionError) as error:
+            self._error(400, 'cambio_no_aceptado', str(error) if type(error) is ValueError else 'Respuesta no compatible. Revisa el estado antes de continuar.')
+            return
+        except Exception:
+            self._error(502, 'router_no_disponible', 'No se pudo comprobar el resultado. No repitas el cambio sin consultar su estado.')
+            return
+        self._json(200, {'version_esquema': 1, 'datos': resultado})
 
     def _cerrar_aplicacion(self):
         """Valida confirmación y ejecución; solo el iniciador puede habilitar el cierre."""

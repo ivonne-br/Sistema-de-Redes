@@ -30,7 +30,7 @@ class PruebasRouter(unittest.TestCase):
         self.rx, self.tx = 1000, 500
         self.fallo = None
         self.llamadas = []
-        self.monitor = MonitoreoRouter(consultar_contexto=lambda: deepcopy(self.red),
+        self.monitor = MonitoreoRouter(identificar_router=lambda g: {'adaptador': 'sercomm', 'nombre': 'Simulado'}, consultar_contexto=lambda: deepcopy(self.red),
                                       leer=self.leer, reloj=lambda: self.t)
         self.monitor.ciclo()
         self.datos = {'cookie': 'session_id=secreto_sintetico', 'csrf': 'token_sintetico',

@@ -1,8 +1,8 @@
-"""Consulta GET del Sercomm, sesión temporal y memoria de telemetría para API.
+"""Integra identificación, lectura y administración explícita del router para API.
 
 Entradas: contexto local, sesión del panel autorizada y reloj continuo. Salidas:
-inventario y series WAN normalizados. Nunca escribe configuración del router;
-los secretos viven en memoria y la API exige una clave distinta para consultar.
+inventario y series WAN normalizados. La lectura no concede escritura: cada
+cambio exige permiso y confirmación. Los secretos viven solo en memoria.
 """
 
 from collections import deque
@@ -13,12 +13,14 @@ from ipaddress import IPv4Address, IPv4Network
 import re
 import json
 import secrets
-from threading import Event, RLock
+from threading import Event, RLock, Lock
 from uuid import uuid4
 
 from backend.contexto_red import consultar_contexto_ipv4
 from backend.reloj import tiempo_continuo
 from backend.router_login import iniciar_sesion
+from backend.router_adaptadores import identificar, solicitar, Sercomm
+from backend.administracion_router import AdministracionRouter
 from backend.router_http import cabeceras_router, consulta_router
 from backend.router_json import interpretar_json_router, FUENTES
 
@@ -134,7 +136,14 @@ class MonitoreoRouter:
     """
 
     def __init__(self, *, consultar_contexto=consultar_contexto_ipv4,
-                 leer=leer_router, reloj=tiempo_continuo, login=iniciar_sesion):
+                 leer=leer_router, reloj=tiempo_continuo, login=iniciar_sesion,
+                 identificar_router=identificar, transporte_admin=solicitar):
+        self._identificar = identificar_router
+        self._identidad = None
+        self._intento_identidad = float("-inf")
+        self._transporte_admin = transporte_admin
+        self._administracion = AdministracionRouter(reloj)
+        self._operacion = Lock()
         self._contexto = consultar_contexto
         self._leer = leer
         self._login = login
@@ -156,6 +165,7 @@ class MonitoreoRouter:
         self._etapa_error = None
         if self._sesion:
             self._sesion.pop('password', None)
+            self._sesion.pop('administracion', None)
         self._sesion = None
         self._tablas.clear()
         self._series.clear()
@@ -172,6 +182,8 @@ class MonitoreoRouter:
             if red != self._red:
                 self._limpiar('requiere_autorizacion' if red else 'sin_contexto')
                 self._red = red
+                self._identidad = None
+                self._intento_identidad = float('-inf')
                 self._id = str(uuid4()) if red else None
             if red is None:
                 self._estado = 'sin_contexto'
@@ -186,6 +198,8 @@ class MonitoreoRouter:
                 raise ValueError('Ya existe una sesión; ciérrala o espera su caducidad.')
             if not red or datos.get('id_contexto') != self._id or datos.get('confirmado') is not True:
                 raise ValueError('La red cambió o falta confirmar el destino.')
+            if not self._identidad or self._identidad.get('adaptador') != 'sercomm':
+                raise ValueError('Todavía no se reconoce un adaptador para este router.')
             clave = secrets.token_urlsafe(32)
             sesion = {'clave': clave, 'vence': self._reloj() + 1800, 'verificada': False}
             if 'usuario' in datos:
@@ -211,6 +225,8 @@ class MonitoreoRouter:
         ahora = self._reloj()
         if self._sesion and ahora >= self._sesion['vence']:
             self._limpiar('autorizacion_expirada')
+        if self._sesion:
+            self._administracion.estado(self._sesion)
         while self._series and ahora - self._series[0]['_t'] > 600:
             self._series.popleft()
         self._tablas = {k: v for k, v in self._tablas.items() if ahora - v['_t'] <= 600}
@@ -232,9 +248,11 @@ class MonitoreoRouter:
             permitido = self._permitido(clave)
             salida = {'estado': self._estado, 'etapa_error': self._etapa_error, 'id_contexto': self._id,
                       'gateway_candidato': self._red['gateway'] if self._red else None,
+                      'identificacion': deepcopy(self._identidad),
                       'autorizada': permitido, 'tablas': {}, 'series': [], 'resumen_trafico': [], 'trafico_por_periodo': {},
                       'intervalo_s': 5, 'retencion_s': 600}
             if permitido:
+                salida['administracion'] = self._administracion.estado(self._sesion)
                 salida['contexto'] = deepcopy(self._red)
                 salida['restante_s'] = max(0, self._sesion['vence'] - self._reloj())
                 for fuente, tabla in self._tablas.items():
@@ -264,6 +282,14 @@ class MonitoreoRouter:
 
     def ciclo(self):
         red = self._sincronizar()
+        if red and (self._identidad is None or (not self._identidad.get('adaptador')
+                    and self._reloj() - self._intento_identidad >= 60)):
+            self._intento_identidad = self._reloj()
+            identidad = self._identificar(red['gateway'])
+            if self._sincronizar() != red:
+                return
+            with self._lock:
+                self._identidad = identidad
         with self._lock:
             self._expirar()
             sesion = self._sesion
@@ -386,6 +412,37 @@ class MonitoreoRouter:
                     else:
                         self._limpiar(str(error))
                     self._etapa_error = getattr(error, 'etapa', etapa)
+
+    def administrar(self, clave, accion, datos):
+        """API de administración: sesión aislada, contexto actual y un cambio a la vez."""
+        red = self._sincronizar()
+        with self._lock:
+            self._expirar()
+            if not self._permitido(clave) or not self._sesion.get('verificada'):
+                raise PermissionError('Primero conecta el router y espera una lectura válida.')
+            sesion = self._sesion
+        if not self._operacion.acquire(blocking=False):
+            raise ValueError('Hay una operación en curso. Espera su resultado.')
+        try:
+            def vigente():
+                if not self._vigente(sesion, red):
+                    return False
+                return accion == 'autorizar' or self._administracion.estado(sesion)['autorizada']
+
+            def pedir(ruta, campos=None):
+                if not vigente():
+                    raise PermissionError('El permiso caducó o cambió la red.')
+                return self._transporte_admin(red['gateway'], ruta, sesion['cookie'], sesion['csrf'],
+                                              campos, vigente)
+
+            with self._lock:
+                tabla = self._tablas.get('dhcp-json', {})
+                propias = [e['mac'].upper() for e in tabla.get('equipos', [])
+                           if e.get('mac') and e.get('ipv4') == red['ipv4_local'].split('/')[0]
+                           and self._reloj() - tabla.get('_t', float('-inf')) <= 20]
+            return self._administracion.actuar(sesion, Sercomm(pedir), accion, datos, propias)
+        finally:
+            self._operacion.release()
 
     def ejecutar(self):
         while not self._parada.is_set():
