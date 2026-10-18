@@ -14,7 +14,7 @@ from backend.reloj import tiempo_continuo
 from backend.router_http import cabeceras_router, consulta_router
 
 REDES = tuple(IPv4Network(n) for n in ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'))
-RUTAS = {'/login.html', '/js/status-and-support_wan.js', '/data/statussupportstatus.json',
+RUTAS = {'/', '/login.html', '/js/status-and-support_wan.js', '/data/statussupportstatus.json',
          '/data/user_data.json', '/data/wifi_general.json', '/data/wifi_mac_filter.json',
          '/data/wifi_mac_filter_list.json', '/data/reset.json', '/data/login.json'}
 ESCRITURA = {'/data/wifi_general.json', '/data/wifi_mac_filter.json', '/data/reset.json', '/data/login.json'}
@@ -66,18 +66,33 @@ def solicitar(gateway, ruta, cookie='', csrf='', campos=None, vigente=lambda: Tr
 
 def identificar(gateway):
     """Consulta pública sin credenciales; la marca no acredita un modelo concreto."""
-    desconocido = {'adaptador': None, 'nombre': 'Router sin identificar'}
-    try:
-        pagina = solicitar(gateway, '/login.html')
-        token = re.search(r"\bvar\s+csrf_token\s*=\s*['\"]([A-Za-z0-9_-]{1,256})['\"]", pagina)
-        if 'Sercomm' not in pagina or 'js/login.js' not in pagina or not token:
-            return desconocido
-        script = solicitar(gateway, '/js/status-and-support_wan.js', csrf=token[1])
-        if all(s in script for s in ('$.getJSON', 'csrf_token', 'statussupportwan_wan_statistics.json',
-                                    'statussupportwan_ipv6wan_statistics.json')):
-            return {'adaptador': 'sercomm', 'nombre': 'Panel Sercomm reconocido'}
-    except Exception:
-        pass
+    desconocido = {'adaptador': None, 'nombre': 'Router sin identificar',
+                   'estado': 'no_reconocido',
+                   'mensaje': 'El panel respondió, pero todavía no tenemos una lectura compatible. Puedes seguir comprobando tu conexión sin ingresar la contraseña del router.'}
+    respondio = False
+    for ruta in ('/login.html', '/'):
+        try:
+            pagina = solicitar(gateway, ruta)
+            respondio = True
+            # La etiqueta del usuario no sustituye la identificación del equipo actual.
+            if ('technicolor' in pagina.lower()
+                    and re.search(r'\bCGA4233TLV2\b', pagina, re.I)):
+                return {**desconocido, 'nombre': 'Technicolor CGA4233TLV2',
+                        'estado': 'lectura_pendiente',
+                        'mensaje': 'Reconocimos el Technicolor CGA4233TLV2. Su acceso y lectura de datos todavía no están integrados; por eso los campos están desactivados. Las comprobaciones generales siguen disponibles.'}
+            token = re.search(r"\bvar\s+csrf_token\s*=\s*['\"]([A-Za-z0-9_-]{1,256})['\"]", pagina)
+            if 'Sercomm' not in pagina or 'js/login.js' not in pagina or not token:
+                continue
+            script = solicitar(gateway, '/js/status-and-support_wan.js', csrf=token[1])
+            if all(s in script for s in ('$.getJSON', 'csrf_token', 'statussupportwan_wan_statistics.json',
+                                        'statussupportwan_ipv6wan_statistics.json')):
+                return {'adaptador': 'sercomm', 'nombre': 'Panel Sercomm reconocido',
+                        'estado': 'compatible'}
+        except Exception:
+            continue
+    if not respondio:
+        return {**desconocido, 'estado': 'sin_respuesta',
+                'mensaje': 'No pudimos consultar el panel de este router. Esto no significa que Internet esté caído ni que tu contraseña sea incorrecta: todavía no la hemos enviado. Comprueba si puedes abrir el panel en tu navegador.'}
     return desconocido
 
 
