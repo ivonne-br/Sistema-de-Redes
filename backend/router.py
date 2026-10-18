@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 from http.client import HTTPConnection, BadStatusLine
 from ipaddress import IPv4Address, IPv4Network
 import re
-import json
 import secrets
 from threading import Event, RLock, Lock
 from uuid import uuid4
@@ -22,7 +21,9 @@ from backend.router_login import iniciar_sesion
 from backend.router_adaptadores import identificar, solicitar, Sercomm
 from backend.administracion_router import AdministracionRouter
 from backend.router_http import cabeceras_router, consulta_router
-from backend.router_json import interpretar_json_router, FUENTES
+from backend.router_json import FUENTES
+from backend.router_telemetria import LecturaSercomm
+from backend.router_technicolor import LecturaTechnicolor, huella_publica
 
 _REDES = tuple(IPv4Network(n) for n in ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'))
 _SCRIPT = '/js/status-and-support_wan.js'
@@ -73,6 +74,20 @@ def leer_router(gateway, ruta, cookie, csrf):
         raise ErrorRouter('error_lectura_router') from None
     finally:
         conexion.close()
+
+
+def identificar_lectura(gateway):
+    """Conserva Sercomm y ofrece verificación TLS explícita para el otro contrato."""
+    identidad = identificar(gateway)
+    if identidad.get('adaptador'):
+        return identidad
+    try:
+        huella = huella_publica(gateway)
+    except (OSError, ValueError):
+        return identidad
+    return {'adaptador': 'technicolor', 'nombre': 'Panel HTTPS por verificar',
+            'estado': 'certificado_pendiente', 'huella_sha256': huella,
+            'mensaje': 'El router ofrece HTTPS. Antes del acceso, compara su huella de certificado con la del panel abierto en tu navegador. Después comprobaremos si usa el contrato Technicolor compatible.'}
 
 
 def _contexto(lectura):
@@ -137,7 +152,7 @@ class MonitoreoRouter:
 
     def __init__(self, *, consultar_contexto=consultar_contexto_ipv4,
                  leer=leer_router, reloj=tiempo_continuo, login=iniciar_sesion,
-                 identificar_router=identificar, transporte_admin=solicitar):
+                 identificar_router=identificar_lectura, transporte_admin=solicitar, adaptadores=None):
         self._identificar = identificar_router
         self._identidad = None
         self._intento_identidad = float("-inf")
@@ -147,6 +162,10 @@ class MonitoreoRouter:
         self._contexto = consultar_contexto
         self._leer = leer
         self._login = login
+        self._adaptadores = dict(adaptadores) if adaptadores is not None else {
+            "sercomm": LecturaSercomm(lambda *a: self._leer(*a),
+                                     lambda *a: self._login(*a), ErrorRouter),
+            "technicolor": LecturaTechnicolor()}
         self._reloj = reloj
         self._lock = RLock()
         self._parada = Event()
@@ -156,6 +175,7 @@ class MonitoreoRouter:
         self._sesion = None
         self._estado = 'buscando_gateway'
         self._etapa_error = None
+        self._diagnostico_acceso = []
         self._tablas = {}
         self._series = deque(maxlen=360)
         self._bases = {}
@@ -163,6 +183,7 @@ class MonitoreoRouter:
 
     def _limpiar(self, estado):
         self._etapa_error = None
+        self._diagnostico_acceso = []
         if self._sesion:
             self._sesion.pop('password', None)
             self._sesion.pop('administracion', None)
@@ -198,10 +219,16 @@ class MonitoreoRouter:
                 raise ValueError('Ya existe una sesión; ciérrala o espera su caducidad.')
             if not red or datos.get('id_contexto') != self._id or datos.get('confirmado') is not True:
                 raise ValueError('La red cambió o falta confirmar el destino.')
-            if not self._identidad or self._identidad.get('adaptador') != 'sercomm':
+            if not self._identidad or self._identidad.get('adaptador') not in self._adaptadores:
                 raise ValueError('Todavía no se reconoce un adaptador para este router.')
             clave = secrets.token_urlsafe(32)
-            sesion = {'clave': clave, 'vence': self._reloj() + 1800, 'verificada': False}
+            sesion = {'adaptador': self._identidad['adaptador'], 'clave': clave, 'vence': self._reloj() + 1800, 'verificada': False}
+            if sesion['adaptador'] == 'technicolor':
+                huella = datos.get('huella_confirmada')
+                if (not isinstance(huella, str) or not re.fullmatch('[0-9a-f]{64}', huella)
+                        or huella != self._identidad.get('huella_sha256')):
+                    raise ValueError('Confirma el certificado del router actual antes de acceder.')
+                sesion['huella'] = huella
             if 'usuario' in datos:
                 usuario, password = datos.get('usuario'), datos.get('password')
                 if (not isinstance(usuario, str) or not 1 <= len(usuario) <= 128
@@ -209,6 +236,8 @@ class MonitoreoRouter:
                     raise ValueError('Credenciales no compatibles.')
                 sesion.update(usuario=usuario, password=password)
             else:
+                if sesion['adaptador'] != 'sercomm':
+                    raise ValueError('Este equipo requiere su formulario de acceso.')
                 cookie, csrf = datos.get('cookie'), datos.get('csrf')
                 if (not isinstance(cookie, str) or not 1 <= len(cookie) <= 4096
                         or any(ord(c) < 32 or ord(c) > 126 for c in cookie)
@@ -217,6 +246,8 @@ class MonitoreoRouter:
                     raise ValueError('La sesión del panel tiene un formato no compatible.')
                 sesion.update(cookie=cookie, csrf=csrf)
             self._sesion = sesion
+            self._etapa_error = None
+            self._diagnostico_acceso = []
             self._estado = 'verificando_compatibilidad'
             self._despertar.set()
             return clave
@@ -242,13 +273,24 @@ class MonitoreoRouter:
         return bool(self._sesion and isinstance(clave, str) and clave.isascii()
                     and secrets.compare_digest(self._sesion['clave'], clave))
 
+    def _capacidades(self):
+        """Publica solo funciones del adaptador registrado, nunca del proveedor."""
+        nombre = (self._identidad or {}).get('adaptador')
+        adaptador = self._adaptadores.get(nombre)
+        return {'lectura': adaptador is not None,
+                'administracion': nombre == 'sercomm' and adaptador is not None,
+                'fuente_inventario': adaptador.fuente_inventario if adaptador else None,
+                'trafico': nombre == 'sercomm' and adaptador is not None}
+
     def estado(self, clave=None):
         with self._lock:
             self._expirar()
             permitido = self._permitido(clave)
-            salida = {'estado': self._estado, 'etapa_error': self._etapa_error, 'id_contexto': self._id,
+            salida = {'estado': self._estado, 'etapa_error': self._etapa_error,
+                      'diagnostico_acceso': deepcopy(self._diagnostico_acceso), 'id_contexto': self._id,
                       'gateway_candidato': self._red['gateway'] if self._red else None,
                       'identificacion': deepcopy(self._identidad),
+                      'capacidades': self._capacidades(),
                       'autorizada': permitido, 'tablas': {}, 'series': [], 'resumen_trafico': [], 'trafico_por_periodo': {},
                       'intervalo_s': 5, 'retencion_s': 600}
             if permitido:
@@ -282,7 +324,9 @@ class MonitoreoRouter:
 
     def ciclo(self):
         red = self._sincronizar()
-        if red and (self._identidad is None or (not self._identidad.get('adaptador')
+        if red and (self._identidad is None or ((not self._identidad.get('adaptador')
+                    or ((self._identidad.get('estado') == 'certificado_pendiente'
+                         or self._estado == 'certificado_router_cambiado') and not self._sesion))
                     and self._reloj() - self._intento_identidad >= 60)):
             self._intento_identidad = self._reloj()
             identidad = self._identificar(red['gateway'])
@@ -296,6 +340,7 @@ class MonitoreoRouter:
         if not red or not sesion:
             return
         etapa = 'inicio'
+        adaptador = self._adaptadores[sesion['adaptador']]
         try:
             if 'password' in sesion:
                 with self._lock:
@@ -304,57 +349,59 @@ class MonitoreoRouter:
                     password = sesion.pop('password')
                     usuario = sesion.pop('usuario')
                 try:
-                    cookie, csrf = self._login(red['gateway'], usuario, password,
-                                              lambda: self._vigente(sesion, red))
+                    opciones = {'huella': sesion['huella']} if sesion['adaptador'] == 'technicolor' else {}
+                    acceso = adaptador.autenticar(red['gateway'], usuario, password,
+                                                 lambda: self._vigente(sesion, red), **opciones)
                 finally:
                     password = ''
                 if not self._vigente(sesion, red):
                     return
                 with self._lock:
-                    sesion.update(cookie=cookie, csrf=csrf)
+                    sesion['acceso'] = acceso
+                    if sesion['adaptador'] == 'sercomm':
+                        sesion.update(acceso)
             if not sesion['verificada']:
                 if not self._vigente(sesion, red):
                     return
-                etapa = 'script_lectura'
-                script = self._leer(red['gateway'], _SCRIPT, sesion['cookie'], sesion['csrf'])
-                if not all(n in script for n in (FUENTES['wan-ipv4-json'],
-                                                FUENTES['wan-ipv6-json'], '$.getJSON', 'csrf_token')):
-                    raise ErrorRouter('sesion_o_router_no_compatible')
-                sesion['verificada'] = True
+                etapa = 'perfil_router' if sesion['adaptador'] == 'technicolor' else 'script_lectura'
+                adaptador.verificar(red['gateway'], sesion.get('acceso', sesion))
+                if not self._vigente(sesion, red):
+                    return
+                with self._lock:
+                    sesion['verificada'] = True
+                    if sesion['adaptador'] == 'technicolor':
+                        self._identidad = {**self._identidad, 'nombre': adaptador.nombre,
+                                           'estado': 'compatible', 'mensaje': None}
             if not self._vigente(sesion, red):
                 return
             etapa = 'validacion_sesion'
-            try:
-                usuario = json.loads(self._leer(red['gateway'], '/data/user_data.json', sesion['cookie'], sesion['csrf']))
-                if (not isinstance(usuario, list) or not any(
-                        isinstance(f, dict) and isinstance(f.get('username'), str) and f['username'].strip()
-                        for f in usuario)):
-                    raise ValueError()
-            except (ValueError, RecursionError):
-                raise ErrorRouter('autorizacion_rechazada') from None
+            adaptador.validar_sesion(red['gateway'], sesion.get('acceso', sesion))
             fallos = False
-            for fuente, nombre in FUENTES.items():
+            diagnostico_fuentes = []
+            for fuente in adaptador.fuentes:
                 if not self._vigente(sesion, red):
                     return
                 try:
                     inicio = self._reloj()
-                    texto = self._leer(red['gateway'], '/data/' + nombre, sesion['cookie'], sesion['csrf'])
-                    normal = interpretar_json_router(texto, fuente)
+                    normal = adaptador.leer(red['gateway'], fuente, sesion.get('acceso', sesion))
                     if normal['estado'] != 'lectura_correcta':
                         raise ValueError()
                     t = self._reloj()
-                    if t - inicio > 8:
+                    if t - inicio > getattr(adaptador, 'plazo_lectura_s', 8):
                         raise ValueError()
                 except ErrorRouter as error:
                     if str(error) == 'autorizacion_rechazada':
                         raise
                     fallos = True
+                    diagnostico_fuentes.append({'paso': 'equipos' if sesion['adaptador'] == 'technicolor' else 'tablas',
+                                                'resultado': str(error)})
                     with self._lock:
                         self._fallos.add(fuente)
                         self._bases = {k: v for k, v in self._bases.items() if k[0] != fuente}
                     continue
                 except ValueError:
                     fallos = True
+                    diagnostico_fuentes.append({'paso': 'interpretar_tabla', 'resultado': 'formato_no_compatible'})
                     with self._lock:
                         self._fallos.add(fuente)
                         self._bases = {k: v for k, v in self._bases.items() if k[0] != fuente}
@@ -397,14 +444,15 @@ class MonitoreoRouter:
             with self._lock:
                 if self._sesion is sesion:
                     self._estado = 'error_fuente' if fallos else 'lectura_correcta'
-                    self._etapa_error = None
+                    self._etapa_error = 'lectura_tablas' if fallos else None
+                    self._diagnostico_acceso = diagnostico_fuentes
         except ErrorRouter as error:
             with self._lock:
                 if self._sesion is sesion:
                     transitorio = str(error) in {
                         'http_invalido_router', 'error_http_router', 'tiempo_agotado_router',
                         'conexion_fallida_router', 'error_lectura_router'}
-                    if transitorio and 'cookie' in sesion and not hasattr(error, 'etapa'):
+                    if transitorio and ('acceso' in sesion or 'cookie' in sesion) and not hasattr(error, 'etapa'):
                         # Solo se reintentan GET con la sesión ya obtenida. Nunca login.
                         self._estado = str(error)
                         self._bases.clear()
@@ -412,6 +460,7 @@ class MonitoreoRouter:
                     else:
                         self._limpiar(str(error))
                     self._etapa_error = getattr(error, 'etapa', etapa)
+                    self._diagnostico_acceso = getattr(error, 'diagnostico', [])
 
     def administrar(self, clave, accion, datos):
         """API de administración: sesión aislada, contexto actual y un cambio a la vez."""
@@ -421,6 +470,8 @@ class MonitoreoRouter:
             if not self._permitido(clave) or not self._sesion.get('verificada'):
                 raise PermissionError('Primero conecta el router y espera una lectura válida.')
             sesion = self._sesion
+            if sesion['adaptador'] != 'sercomm':
+                raise PermissionError('Este equipo todavía no tiene administración comprobada.')
         if not self._operacion.acquire(blocking=False):
             raise ValueError('Hay una operación en curso. Espera su resultado.')
         try:

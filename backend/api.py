@@ -172,7 +172,8 @@ class _Peticion(BaseHTTPRequestHandler):
                 raise ValueError()
             datos = json.loads(self.rfile.read(longitud))
             if not isinstance(datos, dict) or set(datos) not in ({'cookie', 'csrf', 'id_contexto', 'confirmado'},
-                                                       {'usuario', 'password', 'id_contexto', 'confirmado'}):
+                                                       {'usuario', 'password', 'id_contexto', 'confirmado'},
+                                                       {'usuario', 'password', 'id_contexto', 'confirmado', 'huella_confirmada'}):
                 raise ValueError()
             clave = monitor.autorizar(datos)
         except (ValueError, UnicodeError, OSError, RecursionError):

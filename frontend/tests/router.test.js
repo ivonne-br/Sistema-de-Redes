@@ -257,3 +257,59 @@ test('omite comparaciones insuficientes, informa destino y cuenta tiempo sin pro
   await vi.advanceTimersByTimeAsync(1000)
   expect(vista.text()).toContain('29:49')
 })
+
+test('explica por qué Technicolor aún no permite ingresar y no ofrece administración', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => ok({ version_esquema: 1, datos: {
+    autorizada: false, estado: 'requiere_autorizacion', tablas: {}, series: [],
+    gateway_candidato: '192.168.50.1',
+    identificacion: { nombre: 'Technicolor CGA4233TLV2', adaptador: null,
+      mensaje: 'Su acceso y lectura todavía no están integrados; por eso los campos están desactivados.' },
+    capacidades: { lectura: false, administracion: false, fuente_inventario: null },
+  } })))
+  vista = mount(Router)
+  await flushPromises()
+  expect(vista.text()).toContain('por eso los campos están desactivados')
+  expect(vista.get('fieldset').attributes('disabled')).toBeDefined()
+  expect(vista.findComponent({ name: 'AdministracionRouter' }).exists()).toBe(false)
+})
+
+test('Technicolor exige comparar certificado y envía su huella sin habilitar escritura', async () => {
+  const datos = { autorizada: false, estado: 'requiere_autorizacion', id_contexto: 'izzi-prueba',
+    gateway_candidato: '192.168.50.1', tablas: {}, series: [],
+    identificacion: { adaptador: 'technicolor', huella_sha256: 'a'.repeat(64) },
+    capacidades: { lectura: true, administracion: false, trafico: false, fuente_inventario: 'technicolor-hosts' } }
+  const consulta = vi.fn(async (_, opciones) => opciones.method === 'POST'
+    ? ok({ clave: 'clave-sintetica' }) : ok({ version_esquema: 1, datos }))
+  vi.stubGlobal('fetch', consulta)
+  vista = mount(Router)
+  await flushPromises()
+  await vista.get('input[maxlength="128"]').setValue('usuario-prueba')
+  await vista.get('input[maxlength="1024"]').setValue('secreto-artificial')
+  await vista.get('form').trigger('submit')
+  expect(consulta.mock.calls.some(([, o]) => o.method === 'POST')).toBe(false)
+  const checks = vista.findAll('input[type=checkbox]')
+  await checks[0].setValue(true)
+  await checks[1].setValue(true)
+  await vista.get('form').trigger('submit')
+  await flushPromises()
+  const [, opciones] = consulta.mock.calls.find(([, o]) => o.method === 'POST')
+  expect(JSON.parse(opciones.body).huella_confirmada).toBe('a'.repeat(64))
+  expect(vista.get('input[maxlength="1024"]').element.value).toBe('')
+})
+
+test('inventario Technicolor usa su fuente y no promete tasas tras esperar', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => ok({ version_esquema: 1, datos: {
+    autorizada: true, restante_s: 1800, estado: 'lectura_correcta', id_contexto: 'izzi-prueba',
+    gateway_candidato: '192.168.50.1', identificacion: { adaptador: 'technicolor' },
+    capacidades: { lectura: true, administracion: false, trafico: false, fuente_inventario: 'technicolor-hosts' },
+    series: [], tablas: { 'technicolor-hosts': { fecha: '2026-10-17T12:00:00Z', vigencia: 'vigente',
+      recuento: { total: 1, activo: 1, inactivo: 0, estado_desconocido: 0 },
+      equipos: [{ nombre: 'Equipo Technicolor de prueba', ipv4: '192.168.50.3', mac: '02:00:00:00:00:01', estado_original: 'Activo' }] } },
+  } })))
+  vista = mount(Router)
+  await flushPromises()
+  expect(vista.text()).toContain('Equipo Technicolor de prueba')
+  expect(vista.find('[data-periodo-trafico]').exists()).toBe(false)
+  expect(vista.text()).not.toContain('Administrar mi router')
+  expect(vista.text()).not.toContain('hacen falta dos lecturas')
+})

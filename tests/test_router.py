@@ -311,3 +311,78 @@ class PruebasRouter(unittest.TestCase):
             self.assertFalse(pedir(headers=cabecera_cookie)[1]['datos']['autorizada'])
         finally:
             servidor.shutdown(); hilo.join(2); servidor.server_close()
+
+
+class PruebasMultiplesAdaptadores(unittest.TestCase):
+    """Entradas sintéticas de otro contrato; salida común sin usar rutas Sercomm."""
+
+    def test_lectura_independiente_y_cambio_de_red_retira_acceso(self):
+        class AdaptadorPrueba:
+            fuentes = ('clientes-prueba',)
+            fuente_inventario = 'clientes-prueba'
+
+            def autenticar(self, gateway, usuario, password, vigente):
+                self.gateway = gateway
+                assert vigente()
+                return {'token_prueba': 'secreto-sintetico'}
+
+            def verificar(self, gateway, acceso):
+                assert acceso == {'token_prueba': 'secreto-sintetico'}
+
+            validar_sesion = verificar
+
+            def leer(self, gateway, fuente, acceso):
+                self.verificar(gateway, acceso)
+                return {'estado': 'lectura_correcta', 'equipos': [],
+                        'recuento_filas_interpretadas': 0, 'wan': []}
+
+        red = contexto()
+        adaptador = AdaptadorPrueba()
+        transporte_sercomm = Mock(side_effect=AssertionError('No usar Sercomm'))
+        m = MonitoreoRouter(consultar_contexto=lambda: red, leer=transporte_sercomm,
+                            login=transporte_sercomm, transporte_admin=transporte_sercomm,
+                            identificar_router=lambda g: {'adaptador': 'prueba'},
+                            adaptadores={'prueba': adaptador})
+        m.ciclo()
+        clave = m.autorizar({'id_contexto': m.estado()['id_contexto'], 'confirmado': True,
+                            'usuario': 'prueba', 'password': 'solo-prueba'})
+        m.ciclo()
+        salida = m.estado(clave)
+        self.assertEqual(salida['estado'], 'lectura_correcta')
+        self.assertEqual(salida['capacidades'], {'lectura': True, 'administracion': False,
+                                                'fuente_inventario': 'clientes-prueba', 'trafico': False})
+        self.assertIn('clientes-prueba', salida['tablas'])
+        self.assertNotIn('secreto-sintetico', json.dumps(salida))
+        self.assertNotIn('password', m._sesion)
+        with self.assertRaises(PermissionError):
+            m.administrar(clave, 'autorizar', {})
+        red['contexto']['gateway'] = '192.168.50.254'
+        m.ciclo()
+        self.assertFalse(m.estado(clave)['autorizada'])
+        self.assertEqual(m.estado(clave)['tablas'], {})
+        transporte_sercomm.assert_not_called()
+
+    def test_identidad_sin_adaptador_registrado_no_recibe_credenciales(self):
+        login = Mock()
+        m = MonitoreoRouter(consultar_contexto=contexto, login=login,
+                            identificar_router=lambda g: {'adaptador': 'sin-integracion'})
+        m.ciclo()
+        self.assertFalse(m.estado()['capacidades']['lectura'])
+        with self.assertRaises(ValueError):
+            m.autorizar({'id_contexto': m.estado()['id_contexto'], 'confirmado': True,
+                         'usuario': 'prueba', 'password': 'solo-prueba'})
+        login.assert_not_called()
+
+    def test_identificacion_publica_no_confunde_proveedor_modelo_y_acceso(self):
+        from backend.router_adaptadores import identificar
+        with patch('backend.router_adaptadores.solicitar', side_effect=[
+                ValueError(), '<title>Technicolor CGA4233TLV2</title>']) as pedir:
+            identidad = identificar('192.168.50.1')
+            self.assertEqual(identidad['estado'], 'lectura_pendiente')
+            self.assertIsNone(identidad['adaptador'])
+            self.assertEqual(pedir.call_args.args, ('192.168.50.1', '/'))
+        for texto in ('izzi', 'Totalplay', 'Technicolor', 'CGA4233TLV2'):
+            with patch('backend.router_adaptadores.solicitar', return_value=texto):
+                self.assertEqual(identificar('192.168.50.1')['estado'], 'no_reconocido')
+        with patch('backend.router_adaptadores.solicitar', side_effect=ValueError()):
+            self.assertEqual(identificar('192.168.50.1')['estado'], 'sin_respuesta')

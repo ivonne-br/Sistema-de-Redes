@@ -1,5 +1,7 @@
 <!-- Consulta memoria protegida y conecta identificación, lectura y administración.
      Entradas: API local y usuario/contraseña del panel introducidos aquí; salida: equipos, ayuda contextual, tiempo restante, tasas y cantidades por conexión y fuente, con explicación cotidiana antes de los detalles técnicos desplegables.
+     Las capacidades del adaptador habilitan lectura y administración por separado.
+     Los detalles de un fallo muestran presencia de cookies, nunca sus valores.
      El inventario DHCP no aporta consumo individual; la vista expresa esa limitación.
      Contraseña solo durante el envío; permiso local en cookie HttpOnly de sesión,
      nunca en preferencias. Admite la clave en memoria de versiones anteriores. -->
@@ -20,7 +22,8 @@ watch(periodo, p => {
   catch { avisoPeriodo.value = 'El periodo se aplica, pero no se pudo guardar en este navegador.' }
 })
 const clave = ref(''), confirmado = ref(false)
-const sesionCookie = ref(false)
+const sesionCookie = ref(false), certificadoConfirmado = ref(false)
+const puedeLeer = computed(() => datos.value?.capacidades?.lectura ?? (datos.value?.identificacion?.adaptador === 'sercomm'))
 const acceso = computed(() => Boolean(clave.value || sesionCookie.value))
 let revision = 0
 let retiradaLocal = false
@@ -53,9 +56,12 @@ const { respuesta, error, cargando } = useResumen(async signal => {
   } else {
     clave.value = ''; sesionCookie.value = false; vence.value = 0
   }
+  if (cuerpo.datos.etapa_error) mensaje.value = ''
   return cuerpo
 })
 const datos = computed(() => respuesta.value?.datos)
+watch([() => datos.value?.id_contexto, () => datos.value?.identificacion?.huella_sha256],
+  () => { certificadoConfirmado.value = false; confirmado.value = false })
 const visible = computed(() => !error.value && acceso.value && datos.value?.autorizada && ahora.value < vence.value)
 const buscarEquipo = ref('')
 const cantidades = computed(() => {
@@ -63,14 +69,19 @@ const cantidades = computed(() => {
   return datos.value.trafico_por_periodo?.[String(periodo.value)]
     ?? (periodo.value === 600 ? datos.value.resumen_trafico : null) ?? []
 })
-const inventario = computed(() => visible.value ? datos.value.tablas['dhcp-json'] : null)
+const inventario = computed(() => visible.value ? datos.value.tablas[datos.value.capacidades?.fuente_inventario ?? 'dhcp-json'] : null)
 // Filtro local de registros ya autorizados; no se guarda la búsqueda ni la identidad.
 const equiposVisibles = computed(() => {
   const texto = buscarEquipo.value.trim().toLocaleLowerCase('es')
   return (inventario.value?.equipos ?? []).filter(e => [e.nombre, e.ipv4, e.mac].some(v => String(v ?? '').toLocaleLowerCase('es').includes(texto)))
 })
-const etapas = { script_lectura: 'leer el script de estadísticas del router',
-  validacion_sesion: 'validar la sesión mediante user_data.json', pagina_login: 'abrir la página de acceso', compatibilidad: 'comprobar compatibilidad',
+const etapas = { menu_sin_sesion: 'abrir el menú: el router no reconoció una sesión autenticada',
+  perfil_router: 'comprobar modelo y versión del router',
+  perfil_router_formato: 'interpretar la respuesta de identificación del router',
+  perfil_router_http_401: 'consultar el modelo: el router devolvió HTTP 401 (sesión no aceptada)',
+  perfil_router_http_403: 'consultar el modelo: el router devolvió HTTP 403 (acceso no permitido)',
+  script_lectura: 'leer el script de estadísticas del router',
+  validacion_sesion: 'comprobar que el router aceptó el acceso', pagina_login: 'abrir la página de acceso', compatibilidad: 'comprobar compatibilidad',
   preparacion_login: 'preparar el acceso', ocupacion: 'comprobar si el router está ocupado',
   envio_login: 'enviar el inicio de sesión', apertura_sesion: 'abrir el panel tras el login', lectura_tablas: 'consultar las tablas' }
 const etiquetas = {
@@ -81,6 +92,8 @@ const etiquetas = {
   tiempo_agotado_router: 'El router no respondió dentro del tiempo de espera.',
   conexion_fallida_router: 'No se pudo establecer la conexión con el router.',
   login_en_espera: 'El router exige esperar antes de otro intento', router_ocupado: 'El router está ocupado o tiene otra sesión activa',
+  certificado_router_cambiado: 'El certificado del router cambió. No enviamos tus credenciales; verifica el equipo antes de volver a autorizar.',
+  certificado_router_no_confirmado: 'Falta confirmar el certificado del router.',
   buscando_gateway: 'Buscando puerta de enlace', sin_contexto: 'Sin una red local compatible',
   requiere_autorizacion: 'Hace falta autorizar la lectura', verificando_compatibilidad: 'Comprobando sesión y formato del router',
   lectura_correcta: 'Último ciclo de lectura correcto', error_fuente: 'Falló una o más tablas; revisa sus fechas',
@@ -96,7 +109,11 @@ function tasa(v) { return v == null ? 'Sin intervalo válido' : `${v.toFixed(3)}
 async function autorizar() {
   pendiente.value = true; mensaje.value = ''
   const cuerpo = { usuario: usuario.value, password: password.value, confirmado: confirmado.value, id_contexto: datos.value?.id_contexto }
-  password.value = ''; confirmado.value = false
+  if (datos.value?.identificacion?.huella_sha256) {
+    if (!certificadoConfirmado.value) { pendiente.value = false; mensaje.value = 'Primero verifica el certificado del router.'; return }
+    cuerpo.huella_confirmada = datos.value.identificacion.huella_sha256
+  }
+  password.value = ''; confirmado.value = false; certificadoConfirmado.value = false
   const control = new AbortController(), limite = setTimeout(() => control.abort(), 8000)
   try {
     const r = await fetch('/api/v1/router/sesion', { method: 'POST', signal: control.signal,
@@ -151,6 +168,10 @@ const grupos = computed(() => {
     <details v-if="error"><summary>Datos del router no disponibles. Ver detalle</summary><p role="status">{{ error }} Los datos privados se ocultan mientras no se pueda verificar el acceso.</p></details>
     <p v-if="datos" role="status">{{ !acceso && ['lectura_correcta', 'verificando_compatibilidad', 'error_fuente'].includes(datos.estado) ? 'Esta vista no tiene acceso autorizado a los datos del router.' : etiquetas[datos.estado] ?? 'Lectura no disponible' }}</p>
     <p v-if="datos && !acceso && ['lectura_correcta', 'verificando_compatibilidad', 'error_fuente'].includes(datos.estado)">Hay una lectura en curso en el backend. Si pertenece a otro navegador o a una versión anterior, espera a que caduque (máximo 30 minutos desde su inicio), o finalízala desde la vista que tenga acceso.</p>
+    <details v-if="datos?.diagnostico_acceso?.length"><summary>Detalles del acceso para revisar el fallo (sin contraseñas)</summary>
+      <p>Esta lista indica si el router entregó los identificadores de sesión y si la aplicación los conservó. No contiene sus valores.</p>
+      <pre style="white-space:pre-wrap">{{ JSON.stringify(datos.diagnostico_acceso, null, 2) }}</pre>
+    </details>
     <p v-if="datos?.etapa_error">El fallo ocurrió al {{ etapas[datos.etapa_error] ?? 'consultar el router' }}.</p>
     <p v-if="mensaje" role="status">{{ mensaje }}</p>
     <aside v-if="datos?.gateway_candidato" aria-label="Router al que se autorizará el acceso"><h3>Router al que vas a acceder</h3><p>{{ datos.identificacion?.nombre ?? 'Comprobando el panel…' }}</p><p>Dirección del panel: <strong>{{ datos.gateway_candidato }}</strong>. Es la dirección de su panel en tu red.</p></aside>
@@ -160,13 +181,19 @@ const grupos = computed(() => {
     <p v-if="acceso && ahora >= vence">Acceso caducado: datos ocultos.</p>
     <details v-if="datos?.gateway_candidato && !error">
       <summary>Añadir información del router · lectura opcional</summary>
-      <p v-if="datos.identificacion && !datos.identificacion.adaptador">Todavía no reconocemos este panel. Puedes seguir usando las comprobaciones generales. Para investigar compatibilidad, consulta el modelo y la versión en el panel o la etiqueta del equipo; no compartas contraseñas ni el número de serie.</p>
+      <p v-if="datos.identificacion?.mensaje">{{ datos.identificacion.mensaje }}</p>
+      <p v-else-if="datos.identificacion && !datos.identificacion.adaptador">Todavía no reconocemos este panel. Puedes seguir usando las comprobaciones generales. Para investigar compatibilidad, consulta el modelo y la versión en el panel o la etiqueta del equipo; no compartas contraseñas ni el número de serie.</p>
       <p>Busca los datos de acceso al panel en la etiqueta o documentación del router, si allí se indican. Si fueron cambiados, consulta a quien administra tu red o a tu proveedor. La contraseña Wi-Fi puede ser distinta; no la supongas ni restablezcas el router para probar.</p>
-      <p>Introduce el usuario y la contraseña del panel del router. Se realizará un solo intento; si falla, revisa el mensaje antes de volver a autorizar.</p>
-      <p>Los valores se introducen solo aquí y se conservan en memoria durante un máximo de 30 minutos. El router observado usa HTTP: el envío al router no está cifrado. Este permiso inicia sesión y consulta las tablas. Los cambios requieren autorizar después la administración y confirmar cada operación. La contraseña se descarta tras el intento.</p>
+      <p v-if="puedeLeer">Introduce el usuario y la contraseña del panel del router. Se realizará un solo intento; si falla, revisa el mensaje antes de volver a autorizar.</p>
+      <p>Los valores se introducen solo aquí y se conservan en memoria durante un máximo de 30 minutos. {{ datos.identificacion?.adaptador === 'technicolor' ? 'Este acceso usa HTTPS y verifica el certificado confirmado antes de enviar datos.' : 'El router observado usa HTTP: el envío al router no está cifrado.' }} Este permiso inicia sesión y consulta las tablas. Los cambios requieren autorizar después la administración y confirmar cada operación. La contraseña se descarta tras el intento.</p>
       <p>Puedes recargar la página sin volver a introducir la contraseña mientras dure el permiso. Se comparte entre las pestañas de este perfil del navegador en la misma dirección local y caduca a los 30 minutos, aunque recargues. Usa «Finalizar acceso de lectura» para volver a la consulta como invitado y retirar también cualquier permiso administrativo.</p>
       <form @submit.prevent="autorizar">
-        <fieldset :disabled="pendiente || acceso || !datos.identificacion?.adaptador">
+        <fieldset :disabled="pendiente || acceso || !puedeLeer">
+          <template v-if="datos.identificacion?.huella_sha256">
+            <p>Comprueba que estás en el panel de tu router. En los detalles de seguridad del navegador, abre su certificado y compara la huella SHA-256 con esta:</p>
+            <details open><summary>Certificado de esta conexión</summary><code style="overflow-wrap:anywhere">{{ datos.identificacion.huella_sha256 }}</code></details>
+            <label><input v-model="certificadoConfirmado" type="checkbox" required /> Comparé la huella y autorizo usar este certificado solo durante este acceso.</label>
+          </template>
           <label>Usuario del router <input v-model="usuario" autocomplete="off" maxlength="128" required /></label>
           <label>Contraseña del router <input v-model="password" type="password" autocomplete="off" maxlength="1024" required /></label>
         <label><input v-model="confirmado" type="checkbox" required /> Confirmo que tengo autorización para acceder al router identificado en {{ datos.gateway_candidato }} y autorizo su lectura temporal.</label>
@@ -176,7 +203,8 @@ const grupos = computed(() => {
       </form>
     </details>
     <template v-if="visible">
-      <AdministracionRouter :clave="clave" :contexto="datos.id_contexto" :estado="datos.administracion" />
+      <AdministracionRouter v-if="datos.capacidades?.administracion ?? (datos.identificacion?.adaptador === 'sercomm')" :clave="clave" :contexto="datos.id_contexto" :estado="datos.administracion" />
+      <template v-if="datos.capacidades?.trafico !== false">
       <label>Periodo para cantidades y gráficas <select v-model="periodo" data-periodo-trafico><option :value="60">Último minuto</option><option :value="300">Últimos 5 minutos</option><option :value="600">Últimos 10 minutos</option></select></label>
       <p v-if="avisoPeriodo" role="status">{{ avisoPeriodo }}</p>
       <p v-if="!cantidades.length">No hay cantidades disponibles para este periodo. Espera lecturas comparables; la ausencia de datos no significa consumo cero.</p>
@@ -201,11 +229,13 @@ const grupos = computed(() => {
       </details>
       <p>Mostramos cada conexión informada por separado. Podrían incluir parte del mismo tráfico: sumarlas podría contar datos dos veces. No representan necesariamente cables o servicios distintos.</p>
 
+      </template>
+      <p v-if="datos.capacidades?.trafico === false">Podemos consultar los equipos informados por este router. Todavía no tenemos una fuente comprobada para mostrar cuánto transfieren sus conexiones.</p>
       <template v-if="inventario">
         <h3>Equipos informados por el router</h3>
         <p>Leído: {{ fecha(inventario.fecha) }} · {{ inventario.vigencia }} · {{ inventario.recuento.total }} registros, {{ inventario.recuento.activo }} activos, {{ inventario.recuento.inactivo }} inactivos, {{ inventario.recuento.estado_desconocido }} desconocidos.</p>
-        <p v-if="inventario.ultimo_intento === 'error'">Falló la última lectura DHCP; esta tabla conserva su fecha anterior.</p>
-        <p id="estado-equipos-router">«Activo» significa que el router mantiene un registro de dirección para ese equipo. No garantiza que esté conectado ahora.</p>
+        <p v-if="inventario.ultimo_intento === 'error'">Falló la última lectura de equipos; esta tabla conserva su fecha anterior.</p>
+        <p id="estado-equipos-router">«Activo» e «Inactivo» son los estados informados por el router en la última lectura. No garantiza que esté conectado ahora; no realizamos una comprobación independiente de cada equipo.</p>
         <p id="limite-consumo-dhcp">Esta fuente no permite saber cuánto consume cada equipo. El uso de las conexiones del router no se puede repartir entre los equipos de esta lista.</p>
         <label>Buscar equipo por nombre o dirección <input v-model="buscarEquipo" type="search" autocomplete="off" /></label>
         <p>{{ equiposVisibles.length }} registros coinciden con la búsqueda.</p>
@@ -215,7 +245,7 @@ const grupos = computed(() => {
         </table></div>
       </template>
       <p v-else>Inventario todavía no disponible.</p>
-      <p v-if="!grupos.length">Todavía no hay mediciones de uso. Para calcular una tasa hacen falta dos lecturas compatibles; la ausencia de datos no significa uso cero.</p>
+      <p v-if="!grupos.length && datos.capacidades?.trafico !== false">Todavía no hay mediciones de uso. Para calcular una tasa hacen falta dos lecturas compatibles; la ausencia de datos no significa uso cero.</p>
       <article v-for="g in grupos" :key="`${datos.id_contexto}-${g.id}`">
         <h3>{{ g.nombre }}</h3>
         <p>El router entrega el uso en grupos separados. Cada gráfica muestra uno de esos grupos, no un equipo ni una segunda prueba de velocidad.</p>
