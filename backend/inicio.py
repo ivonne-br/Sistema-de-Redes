@@ -1,11 +1,10 @@
-"""Inicio local desde Finder: recibe la carpeta preparada y abre Vue vía APILocal.
+"""Inicio local: recibe recursos del repositorio o paquete y abre Vue vía APILocal.
 
 Comprueba archivos, compila Vue cuando cambia y reutiliza la API identificada.
 Posee solo el servidor que crea; el botón de Vue, Enter o señales solicitan su cierre.
 No mide Internet ni solicita permisos del router.
 """
 
-import fcntl
 import hashlib
 from http.client import HTTPConnection, HTTPException
 from html.parser import HTMLParser
@@ -17,11 +16,13 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 from threading import Event, Thread
 import time
+import webbrowser
 
-RAIZ = Path(__file__).resolve().parents[1]
+from backend.entorno_aplicacion import (empaquetada, raiz_recursos, archivo_bloqueo, bloquear)
+
+RAIZ = raiz_recursos()
 APLICACION = 'sistema-de-redes'
 
 
@@ -31,6 +32,8 @@ class ErrorInicio(Exception):
 
 def identidad(raiz=RAIZ):
     """Identifica esta instalación sin publicar su ruta personal."""
+    if empaquetada():
+        return hashlib.sha256(b'sistema-de-redes-paquete-v1').hexdigest()
     return hashlib.sha256(str(raiz.resolve()).encode()).hexdigest()
 
 
@@ -53,7 +56,7 @@ def consultar_inicio(puerto=8000, raiz=RAIZ):
     except (OSError, HTTPException, ValueError, RecursionError) as error:
         raise ErrorInicio(f'El puerto local {puerto} está ocupado o no responde como esta aplicación. '
                           'Revisa la ventana del servicio que ya está abierto. Si es una versión anterior, '
-                          'ciérrala tú cuando termines y vuelve a abrir Iniciar Red.command. '
+                          'ciérrala tú cuando termines y vuelve a abrir la aplicación. '
                           'No se detuvo ningún servicio ajeno. Esto no indica una caída de Internet.') from error
     finally:
         conexion.close()
@@ -63,7 +66,7 @@ def comprobar_lista(datos):
     """Rechaza API detenida o dashboard ausente, aunque HTTP responda."""
     if not datos.get('dashboard'):
         raise ErrorInicio('La API está abierta, pero le falta el dashboard preparado. '
-                          'Cierra su ventana cuando termines y vuelve a abrir Iniciar Red.command.')
+                          'Cierra su ventana cuando termines y vuelve a abrir la aplicación.')
     if datos.get('monitoreo', {}).get('estado') != 'activo':
         raise ErrorInicio('El servicio local responde, pero su recolección se detuvo. '
                           'Revisa su ventana y vuelve a abrir la aplicación después de cerrarlo. '
@@ -97,7 +100,13 @@ def dashboard_valido(directorio):
 
 
 def preparar_dashboard(raiz=RAIZ):
-    """Recompila fuentes cambiadas con dependencias locales; nunca descarga ni instala."""
+    """Valida el paquete; en desarrollo recompila fuentes cambiadas sin descargar."""
+    if empaquetada():
+        dist = raiz / 'frontend/dist'
+        if not dashboard_valido(dist):
+            raise ErrorInicio('La aplicación está incompleta: faltan archivos de la pantalla. '
+                              'Vuelve a instalar una copia completa. No se inició la recolección.')
+        return dist
     frontend = raiz / 'frontend'
     archivos = [frontend / nombre for nombre in ('package.json', 'package-lock.json', 'index.html', 'vite.config.js')]
     archivos += sorted(p for carpeta in ('src', 'public') for p in (frontend / carpeta).rglob('*') if p.is_file())
@@ -141,13 +150,20 @@ def abrir_dashboard(puerto):
     url = f'http://127.0.0.1:{puerto}/'
     print(f'Aplicación lista: {url}\nEsto no confirma acceso a Internet; consulta el dashboard.', flush=True)
     try:
-        subprocess.run(['/usr/bin/open', url], check=True, timeout=10,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if sys.platform == 'darwin':
+            subprocess.run(['/usr/bin/open', url], check=True, timeout=10,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        elif not webbrowser.open(url):
+            raise OSError('Navegador no disponible')
     except (OSError, subprocess.SubprocessError):
         print(f'No se pudo abrir el navegador. Abre esta dirección: {url}', flush=True)
+        if empaquetada():
+            from backend.paquete import mostrar_error
+            mostrar_error(f'La aplicación está iniciada. Abre en tu navegador: {url}')
 
 
-def ejecutar(raiz=RAIZ, puerto=8000, *, crear_api=None, abrir=abrir_dashboard, esperar_cierre=None):
+def ejecutar(raiz=RAIZ, puerto=8000, *, crear_api=None, abrir=abrir_dashboard, esperar_cierre=None,
+             consola=True):
     """Serializa aperturas, reutiliza instancias y mantiene la propiedad del servidor creado."""
     from backend.api import APILocal
     from backend.configuracion import ConfiguracionBackend
@@ -158,18 +174,18 @@ def ejecutar(raiz=RAIZ, puerto=8000, *, crear_api=None, abrir=abrir_dashboard, e
     app = None
     hilo = None
     errores = []
-    bloqueo = Path(tempfile.gettempdir()) / f'redes-inicio-{os.getuid()}-{identidad(raiz)}.lock'
-    descriptor = os.open(bloqueo, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(descriptor, 'w') as archivo:
+    bloqueo = archivo_bloqueo(identidad(raiz))
+    descriptor = os.open(bloqueo, os.O_CREAT | os.O_RDWR | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+    with os.fdopen(descriptor, 'r+b') as archivo:
         try:
-            for senal in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            for senal in (signal.SIGINT, signal.SIGTERM, *([signal.SIGHUP] if hasattr(signal, 'SIGHUP') else [])):
                 anteriores[senal] = signal.signal(senal, lambda *_: parada.set())
             limite = time.monotonic() + 140
             while True:
                 if parada.is_set():
                     return
                 try:
-                    fcntl.flock(archivo, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    bloquear(archivo)
                     break
                 except BlockingIOError:
                     datos = consultar_inicio(puerto, raiz)
@@ -226,7 +242,9 @@ def ejecutar(raiz=RAIZ, puerto=8000, *, crear_api=None, abrir=abrir_dashboard, e
                     if not hilo.is_alive() or app.estado()['estado'] != 'activo':
                         raise ErrorInicio('La recolección local se detuvo. Vuelve a abrir la aplicación. '
                                           'Este fallo no demuestra una caída de Internet.')
-                    if select.select([sys.stdin], [], [], .5)[0]:
+                    if not consola or sys.stdin is None:
+                        parada.wait(.5)
+                    elif select.select([sys.stdin], [], [], .5)[0]:
                         sys.stdin.readline()
                         break
         finally:

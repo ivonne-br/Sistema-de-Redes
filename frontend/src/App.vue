@@ -1,6 +1,6 @@
 <!-- Integra el estado de la API, conectividad pública y telemetría privada.
      Entrada: consultas a Python y confirmación de cierre. Salida: guía principal siempre visible, paneles independientes
-     y aviso solo ante fallo de la API; cierre del servicio propietario, separado de los permisos del router. -->
+     y confirmación modal accesible; cierre del servicio propietario, separado de los permisos del router. -->
 <script setup>
 import { ref, onUnmounted } from 'vue'
 import Router from './components/Router.vue'
@@ -15,6 +15,22 @@ const confirmarCierre = ref(false)
 const enviandoCierre = ref(false)
 const cierreSolicitado = ref(false)
 const errorCierre = ref('')
+const dialogoCierre = ref(null)
+const botonCierre = ref(null)
+// El diálogo nativo bloquea el fondo y mantiene la navegación de teclado dentro.
+function abrirConfirmacion() {
+  if (confirmarCierre.value || cierreSolicitado.value) return
+  errorCierre.value = ''
+  confirmarCierre.value = true
+  dialogoCierre.value.showModal()
+}
+function cancelarCierre() {
+  if (enviandoCierre.value) return
+  dialogoCierre.value.close()
+  confirmarCierre.value = false
+  errorCierre.value = ''
+  botonCierre.value?.focus()
+}
 let controladorCierre
 async function cerrarAplicacion() {
   if (enviandoCierre.value || cierreSolicitado.value || !confirmarCierre.value) return
@@ -25,6 +41,7 @@ async function cerrarAplicacion() {
   try {
     await solicitarCierre(respuesta.value.monitoreo.id_ejecucion, controladorCierre.signal)
     detener()
+    dialogoCierre.value.close()
     cierreSolicitado.value = true
     confirmarCierre.value = false
   } catch (fallo) {
@@ -54,7 +71,7 @@ const vistas = [
     <header>
       <p class="ceja">Instalación local</p>
       <h1>Mi red doméstica</h1>
-      <button v-if="!cierreSolicitado && respuesta?.cierre_disponible && !error && !confirmarCierre" type="button" @click="confirmarCierre = true">Cerrar aplicación</button>
+      <button v-if="!cierreSolicitado && respuesta?.cierre_disponible && !error" ref="botonCierre" type="button" @click="abrirConfirmacion">Cerrar aplicación</button>
       <p>¿Puedes navegar? ¿Cuánto tarda en responder la conexión? ¿Qué equipos y tráfico informa tu router?</p>
       <p>Las comprobaciones describen la red a la que está conectada esta computadora ahora. No necesitas la contraseña del router para consultar la conexión.</p>
     </header>
@@ -75,13 +92,13 @@ const vistas = [
       <p>Abre «Iniciar Red.command» para recuperar el servicio. Si ya está abierto, revisa el mensaje de su ventana.</p>
     </aside>
 
-      <section v-if="confirmarCierre" role="alertdialog" aria-labelledby="titulo-cierre" aria-describedby="efecto-cierre">
+      <dialog ref="dialogoCierre" class="confirmacion-cierre" role="alertdialog" aria-modal="true" @cancel.prevent="cancelarCierre" aria-labelledby="titulo-cierre" aria-describedby="efecto-cierre">
         <h3 id="titulo-cierre">¿Cerrar la aplicación?</h3>
         <p id="efecto-cierre">Se detendrán las mediciones para todas las pestañas de esta aplicación y se perderán las muestras y los permisos temporales del router. No se apagará Internet ni se cambiará la configuración del router.</p>
-        <button type="button" :disabled="enviandoCierre" @click="confirmarCierre = false; errorCierre = ''">Cancelar</button>
+        <button type="button" autofocus :disabled="enviandoCierre" @click="cancelarCierre">Cancelar</button>
         <button type="button" :disabled="enviandoCierre" @click="cerrarAplicacion">{{ enviandoCierre ? 'Solicitando cierre…' : 'Confirmar cierre' }}</button>
         <p v-if="errorCierre" role="alert">{{ errorCierre }}</p>
-      </section>
+      </dialog>
     <footer>Las muestras recientes se conservan temporalmente en memoria. No hay historial persistente.
       <details><summary>Cómo cerrar la aplicación</summary>
         <p>Cerrar esta pestaña no detiene las mediciones. Usa «Cerrar aplicación» y confirma el cierre. Terminar la autorización del router es una acción distinta: permite seguir consultando la conexión.</p>
