@@ -1,6 +1,6 @@
 // Recibe HTTP simulado y acciones de pantalla; comprueba guía concisa, recuperación, cierre
-// confirmado del iniciador y separación respecto de los permisos del router.
-import { afterEach, expect, test, vi } from 'vitest'
+// modal confirmado del iniciador y separación respecto de los permisos del router.
+import { beforeEach, afterEach, expect, test, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import App from '../src/App.vue'
 import { consultarResumen, consultarEstado } from '../src/api.js'
@@ -20,7 +20,17 @@ const fuentes = ruta => {
   return base()
 }
 let vista
-afterEach(() => { vista?.unmount(); vi.useRealTimers(); vi.unstubAllGlobals(); window.history.replaceState({}, '', '/'); localStorage.clear() })
+// JSDOM no implementa la capa modal; simula únicamente apertura/cierre y foco.
+beforeEach(() => {
+  HTMLDialogElement.prototype.showModal = function () {
+    this.setAttribute('open', '')
+    this.querySelector('[autofocus]')?.focus()
+  }
+  HTMLDialogElement.prototype.close = function () {
+    this.removeAttribute('open')
+  }
+})
+afterEach(() => { vista?.unmount(); delete HTMLDialogElement.prototype.showModal; delete HTMLDialogElement.prototype.close; vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllGlobals(); window.history.replaceState({}, '', '/'); localStorage.clear() })
 
 test('integra fuentes públicas y router sin autorizar ni consultar ARP al abrir el resumen', async () => {
   vi.useFakeTimers()
@@ -179,4 +189,23 @@ test('un router que tarda no bloquea la guía ni la prueba web', async () => {
   await vi.advanceTimersByTimeAsync(8000)
   expect(vista.get('[data-panel=internet]').text()).toContain('Sí: esta computadora pudo comunicarse')
   expect(vista.get('[data-panel=equipos]').text()).toContain('Datos del router no disponibles')
+})
+
+
+test('el cierre abre un modal, Escape cancela y devuelve el foco sin enviar la solicitud', async () => {
+  vi.stubGlobal('fetch', vi.fn(async ruta => ok(ruta === '/api/v1/estado'
+    ? { version_esquema: 1, cierre_disponible: true, monitoreo: { estado: 'activo', id_ejecucion: 'prueba' } }
+    : fuentes(ruta))))
+  vista = mount(App, { attachTo: document.body })
+  await flushPromises()
+  const abrir = vista.findAll('button').find(b => b.text() === 'Cerrar aplicación')
+  await abrir.trigger('click')
+  const dialogo = vista.get('dialog')
+  expect(dialogo.element.open).toBe(true)
+  expect(dialogo.attributes('aria-modal')).toBe('true')
+  expect(document.activeElement.textContent).toBe('Cancelar')
+  await dialogo.trigger('cancel')
+  expect(dialogo.element.open).toBe(false)
+  expect(document.activeElement).toBe(abrir.element)
+  expect(fetch.mock.calls.some(([ruta]) => ruta === '/api/v1/cierre')).toBe(false)
 })

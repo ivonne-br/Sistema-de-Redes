@@ -11,13 +11,13 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from http.client import HTTPSConnection, HTTPException
 import json
-from pathlib import Path
 import socket
 import ssl
 import subprocess
 import sys
 from threading import Event, Lock
 from backend.reloj import tiempo_continuo
+from backend.entorno_aplicacion import comando_web, raiz_recursos
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -74,8 +74,8 @@ def ejecutar_comprobacion(tipo, destino, limite, codigo=204):
     """Acota el trabajador completo; run mata y recoge el hijo al agotar el plazo."""
     try:
         proceso = subprocess.run(
-            [sys.executable, '-B', '-m', 'backend.web', tipo, destino, str(limite), str(codigo)],
-            cwd=Path(__file__).resolve().parent.parent, capture_output=True, text=True,
+            comando_web(tipo, destino, limite, codigo),
+            cwd=raiz_recursos(), capture_output=True, text=True,
             timeout=limite, check=True)
         dato = json.loads(proceso.stdout)
         if not isinstance(dato, dict) or 'estado' not in dato or 'duracion_ms' not in dato:
