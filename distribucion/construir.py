@@ -110,7 +110,9 @@ def main():
                    '--add-data', f'{fuente / "licencias"}:licencias', '--collect-data', 'certifi',
                    '--hidden-import', 'certifi']
         if sistema == 'Darwin':
-            comando += ['--windowed', '--osx-bundle-identifier', 'local.sistema.redes']
+            # Icono elegido por la usuaria; ICNS incluye tamaños para Finder y Dock.
+            comando += ['--windowed', '--osx-bundle-identifier', 'local.sistema.redes',
+                        '--icon', str(RAIZ / 'distribucion/recursos/icono-app.icns')]
         elif sistema == 'Windows':
             # Consola permite obtener diagnósticos; el acceso directo usa python-free exe.
             comando += ['--console']

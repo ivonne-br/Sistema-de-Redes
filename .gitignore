@@ -1,3 +1,6 @@
+# Metadatos locales de Finder, sin función en el proyecto.
+.DS_Store
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

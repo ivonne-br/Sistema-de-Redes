@@ -67,7 +67,7 @@ Como punto de partida se consideran:
 | Tráfico y uso | Tasas de transferencia, volumen de datos y participación por dispositivo, condicionados a fuentes verificables. |
 | Wi-Fi | Señal, canal y otros datos que puedan obtenerse del entorno y del equipo. |
 
-# Guía de uso del sistema
+## Guía de uso del sistema
 
 El sistema se ejecuta en una computadora conectada a la red doméstica que se desea observar. Abre un dashboard en el navegador de esa misma computadora y realiza mediciones en segundo plano. No necesita una instalación en cada dispositivo de la vivienda.
 
@@ -84,7 +84,7 @@ Las mediciones recientes se conservan temporalmente en memoria. Al cerrar el sis
 
 | Necesidad | Aplicación empaquetada para la persona usuaria |
 | --- | --- |
-| Sistema operativo | El paquete local se comprobó en macOS 27.0.1 con Apple Silicon (`arm64`).|
+| Sistema operativo | El paquete local se comprobó en macOS 27.0.1 con Apple Silicon (`arm64`). |
 | Navegador | Un navegador para mostrar el dashboard en la misma computadora. |
 | Conexión local | Wi-Fi o Ethernet de la red que se quiere observar. |
 | Python y Node.js | Python y el frontend compilado vienen incluidos. |
@@ -131,7 +131,7 @@ Para consultar las tablas protegidas de un router compatible se necesitan:
 - La **contraseña de acceso al panel del router**.
 
 1. Busca el panel **Dispositivos y tráfico del router**.
-2. Revisa la **Puerta de enlace candidata** que muestra la aplicación. 
+2. Revisa la **Puerta de enlace candidata** que muestra la aplicación.
 3. Abre **Conectar router**.
 4. Escribe el **Usuario del router** y la **Contraseña del router**, respetando sus mayúsculas y minúsculas.
 5. Lee el aviso y marca la confirmación de que tienes autorización para acceder al equipo y permites su lectura temporal.
