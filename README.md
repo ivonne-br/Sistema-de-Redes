@@ -67,229 +67,87 @@ Como punto de partida se consideran:
 | Tráfico y uso | Tasas de transferencia, volumen de datos y participación por dispositivo, condicionados a fuentes verificables. |
 | Wi-Fi | Señal, canal y otros datos que puedan obtenerse del entorno y del equipo. |
 
-## Desarrollo local
+# Guía de uso del sistema
 
-### Entorno comprobado
+El sistema se ejecuta en una computadora conectada a la red doméstica que se desea observar. Abre un dashboard en el navegador de esa misma computadora y realiza mediciones en segundo plano. No necesita una instalación en cada dispositivo de la vivienda.
 
-- macOS.
-- Python 3.14.0.
-- Node.js 22.21.1.
-- Git 2.51.0.
+Permite consultar:
 
-El backend inicial utiliza únicamente la biblioteca estándar de Python.
-Node.js se utilizará posteriormente para el desarrollo de la interfaz Vue.
+- El contexto de la red y los dispositivos observables desde la computadora.
+- Resultados de conectividad, tiempos de respuesta y comprobaciones de DNS y HTTPS, con sus errores y límites.
+- Indicadores y explicaciones elaborados a partir de las mediciones disponibles.
+- Información del router compatible, cuando la persona autoriza temporalmente su lectura.
 
-### Preparación inicial
+Las mediciones recientes se conservan temporalmente en memoria. Al cerrar el sistema se pierden.
 
-Desde la raíz del repositorio, crear el entorno virtual:
+### Qué necesita la computadora
 
-```bash
-python3 -m venv .venv
-```
+| Necesidad | Aplicación empaquetada para la persona usuaria |
+| --- | --- |
+| Sistema operativo | El paquete local se comprobó en macOS 27.0.1 con Apple Silicon (`arm64`).|
+| Navegador | Un navegador para mostrar el dashboard en la misma computadora. |
+| Conexión local | Wi-Fi o Ethernet de la red que se quiere observar. |
+| Python y Node.js | Python y el frontend compilado vienen incluidos. |
+| Acceso al router | Solo para consultar información que requiera autorización, en equipos compatibles. |
 
-Este paso se realiza una vez por entorno local.
+La computadora debe permanecer encendida y la aplicación abierta para seguir recolectando. El sistema no modifica automáticamente la configuración de red de la computadora.
 
-### Activación del entorno
+Que la API responda o el dashboard se abra **no significa que Internet funcione**. La dirección `127.0.0.1` representa la propia computadora; no permite abrir esta instalación desde un teléfono.
 
-En cada nueva terminal utilizada para desarrollar:
+### Cómo obtener el instalador
 
-```bash
-source .venv/bin/activate
-```
-
-Comprobar el intérprete:
-
-```bash
-python -c "import sys; print(sys.executable)"
-```
-
-La ruta debe corresponder a `.venv/bin/python` dentro del repositorio.
-
-### Ejecución
-
-Desde la raíz del repositorio:
-
-```bash
-python -m backend
-```
-
-Resultado esperado:
+En la computadora donde se generó, el archivo se encuentra en:
 
 ```text
-Backend del Sistema de Análisis de Redes iniciado.
+dist/entrega-local/macos-arm64/Sistema-de-Redes-prueba.dmg
 ```
 
-Esta ejecución comprueba el punto de entrada del paquete.
-Todavía no inicia un servidor, descubre dispositivos ni mide conectividad.
+Esa ruta es relativa a la carpeta del proyecto. El archivo generado no se guarda en Git.
 
-### Ejecutar una sonda individual
+### Cómo instalar en macOS
 
-Esta funcionalidad requiere macOS y el entorno virtual activo.
+Estos pasos corresponden al paquete de prueba, cuando ya se dispone del archivo DMG:
 
-Consultar la ayuda:
+1. Abre `Sistema-de-Redes-prueba.dmg` con doble clic.
+2. Arrastra **Sistema de Redes** a **Aplicaciones**.
+3. Espera a que termine la copia y abre la aplicación desde **Aplicaciones**.
+4. La aplicación inicia su servicio local y abre el dashboard en el navegador.
+5. Espera las primeras mediciones. Un panel que indique que está esperando datos todavía no permite concluir que la red funcione bien o mal.
 
-```bash
-python -m backend sonda --help
-```
+No es necesario abrir una terminal ni instalar las herramientas de desarrollo.
 
-Para enviar una solicitud ICMP a un destino IPv4 autorizado:
+- **Cerrar el sistema:** en el dashboard, pulsa **Cerrar aplicación** y después **Confirmar cierre**. Espera a que termine antes de volver a abrirlo.
+- **Cerrar solo la pestaña:** no detiene las mediciones ni equivale a cerrar la aplicación.
+- **Finalizar el acceso al router:** retira la autorización de lectura, pero permite continuar usando los demás paneles.
 
-```bash
-python -m backend sonda DIRECCION_IPV4
-```
+### Qué credenciales se necesitan
 
-Sustituir DIRECCION_IPV4 por la dirección real del destino.
-No escribir literalmente ese marcador.
+Para abrir el dashboard y consultar las mediciones generales **no se necesita crear una cuenta del sistema ni introducir credenciales del router**.
 
-Para consultar la puerta de enlace actual en macOS:
+Para consultar las tablas protegidas de un router compatible se necesitan:
 
-```bash
-route -n get default
-```
+- Autorización de la persona responsable de esa red.
+- El **usuario de administración del router**.
+- La **contraseña de acceso al panel del router**.
 
-El campo gateway indica la puerta de enlace de la ruta consultada.
+1. Busca el panel **Dispositivos y tráfico del router**.
+2. Revisa la **Puerta de enlace candidata** que muestra la aplicación. 
+3. Abre **Conectar router**.
+4. Escribe el **Usuario del router** y la **Contraseña del router**, respetando sus mayúsculas y minúsculas.
+5. Lee el aviso y marca la confirmación de que tienes autorización para acceder al equipo y permites su lectura temporal.
+6. Pulsa **Iniciar lectura automática**. Se realiza un intento de acceso; espera el resultado antes de volver a intentarlo.
+7. Si el acceso y el formato son compatibles, consulta los datos disponibles.
+8. Al terminar, pulsa **Finalizar acceso de lectura**, o cierra toda la aplicación si ya no vas a utilizarla.
 
-El comando sonda devuelve un objeto JSON con:
+La autorización local dura como máximo **30 minutos desde su inicio** y no se renueva al recargar la página. Un cambio de red retira el permiso. La contraseña se descarta tras el intento de acceso; la sesión necesaria para las consultas permanece temporalmente en memoria.
 
-- destino: dirección IPv4 consultada.
-- inicio: fecha y hora de inicio, con zona horaria.
-- metodo: mecanismo utilizado.
-- espera_ms: plazo de respuesta configurado.
-- estado: resultado del intento.
-- rtt_ms: tiempo de ida y vuelta cuando existe una respuesta válida.
-- detalle: explicación adicional, cuando corresponde.
+### Si no se puede consultar el router
 
-Estados posibles:
-
-| Estado | Significado |
+| Mensaje o situación | Qué revisar |
 | --- | --- |
-| respuesta_valida | Se reconoció una respuesta dentro del plazo. |
-| sin_respuesta | No se obtuvo respuesta dentro del plazo establecido. |
-| error_recoleccion | Ocurrió un error al ejecutar o interpretar la prueba. |
-
-Si no existe un RTT válido, rtt_ms es null; no se sustituye por cero.
-
-Una dirección inválida se rechaza antes de ejecutar la sonda.
-La validación del formato no demuestra que el destino exista o pertenezca
-a la red local.
-
-Una respuesta de la puerta de enlace no demuestra acceso a Internet.
-Una ausencia de respuesta tampoco confirma por sí sola una desconexión.
-
-### Configuración de la sonda
-
-Los tiempos se definen y validan mediante `ConfiguracionSonda`,
-en `backend/configuracion.py`.
-
-| Parámetro | Valor predeterminado | Propósito |
-| --- | --- | --- |
-| `espera_ms` | 1000 ms | Plazo para aceptar una respuesta de la sonda. |
-| `limite_proceso_s` | 5 s | Límite de espera por la finalización del proceso `ping`. |
-
-Ambos parámetros deben ser enteros positivos; no se aceptan
-booleanos. El límite del proceso, convertido a milisegundos,
-debe ser mayor que la espera de respuesta.
-
-Un tipo incorrecto produce `TypeError`. Un valor no permitido
-o una relación inválida entre los tiempos produce `ValueError`.
-
-Al llamar a `ejecutar_sonda(destino)` se utiliza la configuración
-predeterminada. Desde código Python puede proporcionarse una
-configuración personalizada como segundo argumento.
-
-Ejemplo de construcción de una configuración; este fragmento
-no ejecuta ninguna sonda:
-
-```python
-from backend.configuracion import ConfiguracionSonda
-
-configuracion = ConfiguracionSonda(
-    espera_ms=2000,
-    limite_proceso_s=6,
-)
-```
-
-Los campos no pueden reasignarse después de crear la configuración.
-Para utilizar otros valores, se construye otra instancia.
-
-El comando `python -m backend sonda DIRECCION_IPV4` utiliza los
-valores predeterminados; todavía no ofrece argumentos para
-personalizar estos tiempos.
-
-Una respuesta cuyo RTT supera `espera_ms` se clasifica como
-`sin_respuesta`, sin RTT válido. Si se agota el límite del proceso,
-se devuelve `error_recoleccion`.
-
-El límite del proceso no es el intervalo entre sondas.
-Esta versión ejecuta una sola sonda por llamada y todavía
-no implementa monitoreo periódico.
-
-### Intérprete de entradas ARP
-
-La función `interpretar_linea_arp(linea)`, en `backend/arp.py`,
-recibe una línea de texto con el formato esperado de `arp -an`
-en macOS y devuelve un diccionario con:
-
-- `ipv4`: dirección IPv4 validada.
-- `mac`: dirección normalizada a seis componentes de dos caracteres
-  hexadecimales en minúsculas, o `None` para una entrada `(incomplete)`.
-- `interfaz`: interfaz indicada en la entrada.
-- `marcas`: lista de marcas presentes, como `ifscope` y `permanent`.
-- `tipo_enlace`: tipo de enlace mostrado por la fuente.
-
-Una línea no reconocida o una dirección IPv4 inválida produce
-`ValueError`. Una entrada incompleta reconocida conserva los
-demás campos y no se trata como un error de interpretación.
-
-La función `interpretar_tabla_arp(texto)` procesa varias líneas
-y devuelve dos listas: `entradas` y `errores`.
-
-Las líneas vacías se omiten. Las entradas interpretables se
-conservan, incluidas las incompletas con `mac = None`.
-Cada error contiene `numero_linea`, contado desde 1 en el texto
-original, y `detalle`. Una línea inválida no impide procesar
-las siguientes.
-
-Un texto vacío produce ambas listas vacías. Un texto formado
-por líneas inválidas produce entradas vacías y errores.
-Este resultado describe la interpretación del texto, no el
-éxito de una consulta al sistema.
-
-Los intérpretes no ejecutan `arp` ni consultan la red.
-Todavía no clasifican las entradas según el entorno ni cuentan
-dispositivos. Una asociación en la caché no confirma disponibilidad
-actual, y el tipo de enlace no permite deducir si el equipo remoto
-está conectado por cable o Wi-Fi.
-
-Las observaciones manuales y los criterios propuestos de clasificación
-se documentan en [Entorno de red local](docs/entorno_red_local.md).
-Las pruebas de `tests/test_arp.py` utilizan líneas ficticias para
-comprobar la extracción, la normalización de MAC, las entradas
-incompletas y el rechazo de entradas inválidas.
-
-### Ejecutar las pruebas automatizadas
-
-Desde la raíz del repositorio, con el entorno virtual activo:
-
-```bash
-python -m unittest discover -s tests -v
-```
-
-Las pruebas utilizan valores conocidos, textos ficticios y respuestas
-simuladas; no envían tráfico a la red.
-
-El resumen debe indicar que se ejecutaron pruebas y terminar con OK.
-Un resultado de cero pruebas no verifica el funcionamiento.
-
-### Finalizar el uso del entorno
-
-```bash
-deactivate
-```
-
-Este comando desactiva el entorno en la terminal actual; no elimina sus archivos.
-
-### Archivos locales
-
-La carpeta `.venv` no se incorpora al repositorio.
-Las credenciales y los datos privados de la red tampoco deben incorporarse.
+| No aparece una puerta de enlace o se indica falta de contexto | Comprueba que la computadora esté conectada a la red que quieres observar y espera una nueva lectura. |
+| Usuario o contraseña rechazados | Revisa los datos de acceso al panel, no los de conexión Wi-Fi. No repitas intentos sin revisar el mensaje. |
+| Router ocupado u otra sesión activa | Espera o finaliza tu sesión anterior desde la vista donde la abriste. No cierres sesiones de otras personas. |
+| Autorización expirada | Inicia una nueva lectura únicamente si todavía necesitas consultar el router y tienes permiso. |
+| Sesión o formato no compatible | El adaptador no pudo validar ese equipo o su respuesta. No apliques instrucciones de otro fabricante. Puedes seguir consultando los paneles generales. |
+| Datos no disponibles o desactualizados | Revisa la fecha y el estado de la fuente. La ausencia de información no demuestra que el router no tenga dispositivos ni que Internet esté caído. |
