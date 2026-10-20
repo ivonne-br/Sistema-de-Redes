@@ -2,10 +2,47 @@
 
 La arquitectura deberá permitir observar una red doméstica, analizar automáticamente sus métricas, presentar información comprensible y ejecutar modificaciones compatibles cuando una persona las confirme y tenga autorización administrativa vigente.
 
-
 ## 1. Enfoque y entorno de ejecución
 
-Se propone una aplicación web con frontend en Vue.js y backend modular en Python, comunicados mediante una API REST. El backend y los procesos de recolección se ejecutarán inicialmente en un equipo local conectado a la red doméstica de prueba.
+Se adopta una aplicación de instalación local por vivienda, con frontend web
+Vue.js y backend modular Python comunicados mediante una API REST local. La
+computadora instalada ejecuta el recolector y backend y muestra el dashboard;
+puede ser el mismo ordenador que usa la persona para consultar y administrar.
+
+El iniciador deberá arrancar una única instancia de backend por instalación,
+comprobar que esté preparada antes de mostrar el dashboard e informar fallos
+de inicio. El cierre de la aplicación deberá detener sus tareas y procesos de
+forma controlada. La sesión de navegador y el proceso de backend se tratarán
+como ciclos de vida distintos; cerrar una pestaña no equivale a cerrar la aplicación.
+
+En el MVP, la API se limitará al acceso desde la propia computadora, mediante
+loopback. El acceso desde teléfonos es una ampliación: requerirá configurar
+explícitamente acceso local, transporte y sesiones antes de exponer funciones
+administrativas. No habrá apertura automática al exterior ni servidor central
+para recolectar remotamente las redes de los visitantes.
+
+```mermaid
+flowchart LR
+    subgraph X[Instalación de vivienda X]
+        IX[Iniciador] --> BX[Backend y recolector X]
+        IX --> DX[Dashboard X]
+        DX -->|API local| BX
+        BX --> MX[Memoria X]
+        BX --> RX[Red y router X]
+    end
+    subgraph Y[Instalación de vivienda Y]
+        IY[Iniciador] --> BY[Backend y recolector Y]
+        IY --> DY[Dashboard Y]
+        DY -->|API local| BY
+        BY --> MY[Memoria Y]
+        BY --> RY[Red y router Y]
+    end
+```
+
+Los componentes de cada instalación conservan estado separado. La igualdad de
+IPs privadas, interfaz o gateway no identifica una vivienda: dos casas pueden
+usar la misma configuración. Las series de análisis deberán distinguir también
+instancia y sesión de recolección; la clave IPv4 actual solo compara configuración.
 
 Los componentes del backend se organizarán por responsabilidades dentro de una misma aplicación. La separación entre módulos no exige desplegar servicios independientes. Los agentes serán componentes de software que ejecutan tareas delimitadas de descubrimiento, monitoreo y análisis; no requieren modelos de inteligencia artificial.
 
@@ -75,6 +112,20 @@ Cada adaptador declarará sus capacidades comprobadas, los parámetros necesario
 
 Se definirán contratos comunes para consultar capacidades, autenticar, obtener información, ejecutar operaciones soportadas y comprobar resultados. Un adaptador no deberá simular el éxito de una función que no implementa.
 
+### 2.11. Recolección local y permisos
+
+Las fuentes del equipo (contexto IPv4, sondas y caché ARP cuando sea accesible)
+y las fuentes del router se combinan conservando su origen y sus límites.
+ARP describe asociaciones de la caché local, no un inventario completo del router.
+Las consultas y modificaciones del router requieren un adaptador comprobado
+para su modelo y firmware; no se presupone una interfaz universal.
+
+Las credenciales del router autorizan acciones ante ese equipo. Los permisos del
+sistema operativo autorizan al proceso recolector.
+Los adaptadores del sistema operativo deberán declarar sus capacidades y fallos;
+una lectura vacía no debe convertirse en una red sin equipos ni en un diagnóstico
+confirmado de permisos.
+
 ## 3. Comunicación y tecnologías
 
 | Relación o componente | Decisión inicial | Pendiente de concretar |
@@ -95,7 +146,10 @@ El transporte entre navegador y backend deberá proteger las credenciales cuando
 
 ## 4. Flujo de observación
 
-1. Al iniciar el backend, el coordinador identifica el entorno y activa los agentes según la configuración disponible.
+1. La persona abre la aplicación instalada; el iniciador prepara el backend local
+   y muestra el dashboard cuando la API está disponible. Al iniciar el backend,
+   el coordinador identifica el entorno y activa los agentes según las capacidades
+   y configuración disponibles.
 2. El descubrimiento obtiene observaciones de dispositivos y el monitoreo realiza las mediciones programadas.
 3. La validación y normalización producen datos internos con su fuente, tiempo y estado.
 4. El almacenamiento temporal conserva las observaciones necesarias para los cálculos y comparaciones.

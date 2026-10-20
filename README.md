@@ -67,70 +67,87 @@ Como punto de partida se consideran:
 | Tráfico y uso | Tasas de transferencia, volumen de datos y participación por dispositivo, condicionados a fuentes verificables. |
 | Wi-Fi | Señal, canal y otros datos que puedan obtenerse del entorno y del equipo. |
 
-## Desarrollo local
+# Guía de uso del sistema
 
-### Entorno comprobado
+El sistema se ejecuta en una computadora conectada a la red doméstica que se desea observar. Abre un dashboard en el navegador de esa misma computadora y realiza mediciones en segundo plano. No necesita una instalación en cada dispositivo de la vivienda.
 
-- macOS.
-- Python 3.14.0.
-- Node.js 22.21.1.
-- Git 2.51.0.
+Permite consultar:
 
-El backend inicial utiliza únicamente la biblioteca estándar de Python.
-Node.js se utilizará posteriormente para el desarrollo de la interfaz Vue.
+- El contexto de la red y los dispositivos observables desde la computadora.
+- Resultados de conectividad, tiempos de respuesta y comprobaciones de DNS y HTTPS, con sus errores y límites.
+- Indicadores y explicaciones elaborados a partir de las mediciones disponibles.
+- Información del router compatible, cuando la persona autoriza temporalmente su lectura.
 
-### Preparación inicial
+Las mediciones recientes se conservan temporalmente en memoria. Al cerrar el sistema se pierden.
 
-Desde la raíz del repositorio, crear el entorno virtual:
+### Qué necesita la computadora
 
-```bash
-python3 -m venv .venv
-```
+| Necesidad | Aplicación empaquetada para la persona usuaria |
+| --- | --- |
+| Sistema operativo | El paquete local se comprobó en macOS 27.0.1 con Apple Silicon (`arm64`).|
+| Navegador | Un navegador para mostrar el dashboard en la misma computadora. |
+| Conexión local | Wi-Fi o Ethernet de la red que se quiere observar. |
+| Python y Node.js | Python y el frontend compilado vienen incluidos. |
+| Acceso al router | Solo para consultar información que requiera autorización, en equipos compatibles. |
 
-Este paso se realiza una vez por entorno local.
+La computadora debe permanecer encendida y la aplicación abierta para seguir recolectando. El sistema no modifica automáticamente la configuración de red de la computadora.
 
-### Activación del entorno
+Que la API responda o el dashboard se abra **no significa que Internet funcione**. La dirección `127.0.0.1` representa la propia computadora; no permite abrir esta instalación desde un teléfono.
 
-En cada nueva terminal utilizada para desarrollar:
+### Cómo obtener el instalador
 
-```bash
-source .venv/bin/activate
-```
-
-Comprobar el intérprete:
-
-```bash
-python -c "import sys; print(sys.executable)"
-```
-
-La ruta debe corresponder a `.venv/bin/python` dentro del repositorio.
-
-### Ejecución
-
-Desde la raíz del repositorio:
-
-```bash
-python -m backend
-```
-
-Resultado esperado:
+En la computadora donde se generó, el archivo se encuentra en:
 
 ```text
-Backend del Sistema de Análisis de Redes iniciado.
+dist/entrega-local/macos-arm64/Sistema-de-Redes-prueba.dmg
 ```
 
-Esta ejecución comprueba el punto de entrada del paquete.
-Todavía no inicia un servidor, descubre dispositivos ni mide conectividad.
+Esa ruta es relativa a la carpeta del proyecto. El archivo generado no se guarda en Git.
 
-### Finalizar el uso del entorno
+### Cómo instalar en macOS
 
-```bash
-deactivate
-```
+Estos pasos corresponden al paquete de prueba, cuando ya se dispone del archivo DMG:
 
-Este comando desactiva el entorno en la terminal actual; no elimina sus archivos.
+1. Abre `Sistema-de-Redes-prueba.dmg` con doble clic.
+2. Arrastra **Sistema de Redes** a **Aplicaciones**.
+3. Espera a que termine la copia y abre la aplicación desde **Aplicaciones**.
+4. La aplicación inicia su servicio local y abre el dashboard en el navegador.
+5. Espera las primeras mediciones. Un panel que indique que está esperando datos todavía no permite concluir que la red funcione bien o mal.
 
-### Archivos locales
+No es necesario abrir una terminal ni instalar las herramientas de desarrollo.
 
-La carpeta `.venv` no se incorpora al repositorio.
-Las credenciales y los datos privados de la red tampoco deben incorporarse.
+- **Cerrar el sistema:** en el dashboard, pulsa **Cerrar aplicación** y después **Confirmar cierre**. Espera a que termine antes de volver a abrirlo.
+- **Cerrar solo la pestaña:** no detiene las mediciones ni equivale a cerrar la aplicación.
+- **Finalizar el acceso al router:** retira la autorización de lectura, pero permite continuar usando los demás paneles.
+
+### Qué credenciales se necesitan
+
+Para abrir el dashboard y consultar las mediciones generales **no se necesita crear una cuenta del sistema ni introducir credenciales del router**.
+
+Para consultar las tablas protegidas de un router compatible se necesitan:
+
+- Autorización de la persona responsable de esa red.
+- El **usuario de administración del router**.
+- La **contraseña de acceso al panel del router**.
+
+1. Busca el panel **Dispositivos y tráfico del router**.
+2. Revisa la **Puerta de enlace candidata** que muestra la aplicación. 
+3. Abre **Conectar router**.
+4. Escribe el **Usuario del router** y la **Contraseña del router**, respetando sus mayúsculas y minúsculas.
+5. Lee el aviso y marca la confirmación de que tienes autorización para acceder al equipo y permites su lectura temporal.
+6. Pulsa **Iniciar lectura automática**. Se realiza un intento de acceso; espera el resultado antes de volver a intentarlo.
+7. Si el acceso y el formato son compatibles, consulta los datos disponibles.
+8. Al terminar, pulsa **Finalizar acceso de lectura**, o cierra toda la aplicación si ya no vas a utilizarla.
+
+La autorización local dura como máximo **30 minutos desde su inicio** y no se renueva al recargar la página. Un cambio de red retira el permiso. La contraseña se descarta tras el intento de acceso; la sesión necesaria para las consultas permanece temporalmente en memoria.
+
+### Si no se puede consultar el router
+
+| Mensaje o situación | Qué revisar |
+| --- | --- |
+| No aparece una puerta de enlace o se indica falta de contexto | Comprueba que la computadora esté conectada a la red que quieres observar y espera una nueva lectura. |
+| Usuario o contraseña rechazados | Revisa los datos de acceso al panel, no los de conexión Wi-Fi. No repitas intentos sin revisar el mensaje. |
+| Router ocupado u otra sesión activa | Espera o finaliza tu sesión anterior desde la vista donde la abriste. No cierres sesiones de otras personas. |
+| Autorización expirada | Inicia una nueva lectura únicamente si todavía necesitas consultar el router y tienes permiso. |
+| Sesión o formato no compatible | El adaptador no pudo validar ese equipo o su respuesta. No apliques instrucciones de otro fabricante. Puedes seguir consultando los paneles generales. |
+| Datos no disponibles o desactualizados | Revisa la fecha y el estado de la fuente. La ausencia de información no demuestra que el router no tenga dispositivos ni que Internet esté caído. |

@@ -1,0 +1,8 @@
+# Herramientas exclusivas de construcción; no se instalan en el equipo usuario.
+pyinstaller==6.20.0
+pyinstaller-hooks-contrib==2026.8
+certifi==2026.2.25
+altgraph==0.17.5
+packaging==26.3
+setuptools==84.0.0
+macholib==1.16.4; sys_platform == 'darwin'

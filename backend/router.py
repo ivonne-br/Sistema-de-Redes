@@ -1,0 +1,512 @@
+"""Integra identificación, lectura y administración explícita del router para API.
+
+Entradas: contexto local, sesión del panel autorizada y reloj continuo. Salidas:
+inventario y series WAN normalizados. La lectura no concede escritura: cada
+cambio exige permiso y confirmación. Los secretos viven solo en memoria.
+"""
+
+from collections import deque
+from copy import deepcopy
+from datetime import datetime, timezone
+from http.client import HTTPConnection, BadStatusLine
+from ipaddress import IPv4Address, IPv4Network
+import re
+import secrets
+from threading import Event, RLock, Lock
+from uuid import uuid4
+
+from backend.contexto_red import consultar_contexto_ipv4
+from backend.reloj import tiempo_continuo
+from backend.router_login import iniciar_sesion
+from backend.router_adaptadores import identificar, solicitar, Sercomm
+from backend.administracion_router import AdministracionRouter
+from backend.router_http import cabeceras_router, consulta_router
+from backend.router_json import FUENTES
+from backend.router_telemetria import LecturaSercomm
+from backend.router_technicolor import LecturaTechnicolor, huella_publica
+
+_REDES = tuple(IPv4Network(n) for n in ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'))
+_SCRIPT = '/js/status-and-support_wan.js'
+_RUTAS = {_SCRIPT, '/data/user_data.json', *('/data/' + nombre for nombre in FUENTES.values())}
+
+
+class ErrorRouter(Exception):
+    """Estado público sin URL, cookie, token ni cuerpo remoto."""
+
+
+def leer_router(gateway, ruta, cookie, csrf):
+    """GET acotado al gateway literal: sin proxy, redirecciones ni reintentos."""
+    ip = IPv4Address(gateway)
+    if not any(ip in red for red in _REDES) or ruta not in _RUTAS:
+        raise ErrorRouter('destino_no_admitido')
+    conexion = HTTPConnection(str(ip), timeout=3)
+    try:
+        conexion.request('GET', ruta + '?' + consulta_router(csrf), headers={
+            **cabeceras_router(),
+            'Cookie': cookie, 'Accept': 'application/json, text/javascript, */*; q=0.01',
+            'Referer': f'http://{ip}/status-and-support.html',
+            'X-Requested-With': 'XMLHttpRequest', 'Cache-Control': 'no-cache',
+        })
+        respuesta = conexion.getresponse()
+        if respuesta.status in (301, 302, 303, 307, 308, 401, 403):
+            raise ErrorRouter('autorizacion_rechazada')
+        if respuesta.status != 200:
+            raise ErrorRouter('error_http_router')
+        inicio = tiempo_continuo()
+        cuerpo = bytearray()
+        while True:
+            bloque = respuesta.read1(16384)
+            cuerpo.extend(bloque)
+            if len(cuerpo) > 1_000_000 or tiempo_continuo() - inicio > 5:
+                raise ErrorRouter('respuesta_no_admitida')
+            if not bloque:
+                break
+        return cuerpo.decode('utf-8')
+    except ErrorRouter:
+        raise
+    except BadStatusLine:
+        raise ErrorRouter('http_invalido_router') from None
+    except TimeoutError:
+        raise ErrorRouter('tiempo_agotado_router') from None
+    except OSError:
+        raise ErrorRouter('conexion_fallida_router') from None
+    except Exception:
+        raise ErrorRouter('error_lectura_router') from None
+    finally:
+        conexion.close()
+
+
+def identificar_lectura(gateway):
+    """Conserva Sercomm y ofrece verificación TLS explícita para el otro contrato."""
+    identidad = identificar(gateway)
+    if identidad.get('adaptador'):
+        return identidad
+    try:
+        huella = huella_publica(gateway)
+    except (OSError, ValueError):
+        return identidad
+    return {'adaptador': 'technicolor', 'nombre': 'Panel HTTPS por verificar',
+            'estado': 'certificado_pendiente', 'huella_sha256': huella,
+            'mensaje': 'El router ofrece HTTPS. Antes del acceso, compara su huella de certificado con la del panel abierto en tu navegador. Después comprobaremos si usa el contrato Technicolor compatible.'}
+
+
+def _contexto(lectura):
+    if lectura.get('estado') != 'contexto_correcto':
+        return None
+    c = lectura.get('contexto') or {}
+    try:
+        ip = IPv4Address(c['gateway'])
+        if not any(ip in red for red in _REDES) or ip not in IPv4Network(c['subred']):
+            return None
+        return {k: c[k] for k in ('interfaz', 'ipv4_local', 'subred', 'gateway')}
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def resumir_trafico(series, ahora, ventana_s=600):
+    """Suma bytes de intervalos completos en la ventana, separados por fuente.
+
+    Entrada: puntos privados con edad continua y diferencias enteras. Salida:
+    cantidades exactas como texto y duración medida para API/Vue. No extrapola
+    huecos ni reparte un intervalo que cruce el inicio de la ventana.
+    """
+    grupos = {}
+    for p in series:
+        edad = ahora - p['_t']
+        if not 0 <= edad < ventana_s:
+            continue
+        clave = (p['fuente'], p['familia_ip'], p['interfaz'])
+        g = grupos.setdefault(clave, {'fuente': clave[0], 'familia_ip': clave[1], 'interfaz': clave[2],
+            'ventana_s': ventana_s, 'intervalos_validos': 0, 'segundos_medidos': 0,
+            'intervalos_excluidos': 0, 'bytes_recibidos': None, 'bytes_enviados': None,
+            'recibidos_mb': None, 'enviados_mb': None, 'total_mb': None,
+            'ultima_fecha': p['fecha'], 'antiguedad_s': edad})
+        g.update(ultima_fecha=p['fecha'], antiguedad_s=edad)
+        dt = p.get('intervalo_s')
+        rx, tx = p.get('bytes_recibidos'), p.get('bytes_enviados')
+        if (p.get('motivo') != 'intervalo_valido' or dt is None or not 0 < dt <= 20
+                or edad + dt > ventana_s or type(rx) is not int or type(tx) is not int or rx < 0 or tx < 0):
+            g['intervalos_excluidos'] += 1
+            continue
+        g['intervalos_validos'] += 1
+        g['segundos_medidos'] += dt
+        g['bytes_recibidos'] = (g['bytes_recibidos'] or 0) + rx
+        g['bytes_enviados'] = (g['bytes_enviados'] or 0) + tx
+    for g in grupos.values():
+        if g['intervalos_validos']:
+            g.update(recibidos_mb=g['bytes_recibidos'] / 1e6, enviados_mb=g['bytes_enviados'] / 1e6,
+                     total_mb=(g['bytes_recibidos'] + g['bytes_enviados']) / 1e6)
+            g['bytes_recibidos'], g['bytes_enviados'] = str(g['bytes_recibidos']), str(g['bytes_enviados'])
+        g['segundos_medidos'] = round(g['segundos_medidos'], 3)
+        g['segundos_sin_medicion'] = round(max(0, ventana_s - g['segundos_medidos']), 3)
+    return list(grupos.values())
+
+
+class MonitoreoRouter:
+    """Un recolector independiente, una autorización y hasta diez minutos en RAM.
+
+    La sesión se liga al contexto completo y caduca a los treinta minutos.
+    Consultar estado no inicia lecturas. Cambio/pérdida de red retira secretos
+    y datos; un fallo ordinario conserva la fecha de la última muestra útil.
+    """
+
+    def __init__(self, *, consultar_contexto=consultar_contexto_ipv4,
+                 leer=leer_router, reloj=tiempo_continuo, login=iniciar_sesion,
+                 identificar_router=identificar_lectura, transporte_admin=solicitar, adaptadores=None):
+        self._identificar = identificar_router
+        self._identidad = None
+        self._intento_identidad = float("-inf")
+        self._transporte_admin = transporte_admin
+        self._administracion = AdministracionRouter(reloj)
+        self._operacion = Lock()
+        self._contexto = consultar_contexto
+        self._leer = leer
+        self._login = login
+        self._adaptadores = dict(adaptadores) if adaptadores is not None else {
+            "sercomm": LecturaSercomm(lambda *a: self._leer(*a),
+                                     lambda *a: self._login(*a), ErrorRouter),
+            "technicolor": LecturaTechnicolor()}
+        self._reloj = reloj
+        self._lock = RLock()
+        self._parada = Event()
+        self._despertar = Event()
+        self._red = None
+        self._id = None
+        self._sesion = None
+        self._estado = 'buscando_gateway'
+        self._etapa_error = None
+        self._diagnostico_acceso = []
+        self._tablas = {}
+        self._series = deque(maxlen=360)
+        self._bases = {}
+        self._fallos = set()
+
+    def _limpiar(self, estado):
+        self._etapa_error = None
+        self._diagnostico_acceso = []
+        if self._sesion:
+            self._sesion.pop('password', None)
+            self._sesion.pop('administracion', None)
+        self._sesion = None
+        self._tablas.clear()
+        self._series.clear()
+        self._bases.clear()
+        self._fallos.clear()
+        self._estado = estado
+
+    def _sincronizar(self):
+        try:
+            red = _contexto(self._contexto())
+        except Exception:
+            red = None
+        with self._lock:
+            if red != self._red:
+                self._limpiar('requiere_autorizacion' if red else 'sin_contexto')
+                self._red = red
+                self._identidad = None
+                self._intento_identidad = float('-inf')
+                self._id = str(uuid4()) if red else None
+            if red is None:
+                self._estado = 'sin_contexto'
+            return deepcopy(red)
+
+    def autorizar(self, datos):
+        """Recibe secretos del formulario local; devuelve solo una clave local nueva."""
+        red = self._sincronizar()
+        with self._lock:
+            self._expirar()
+            if self._sesion:
+                raise ValueError('Ya existe una sesión; ciérrala o espera su caducidad.')
+            if not red or datos.get('id_contexto') != self._id or datos.get('confirmado') is not True:
+                raise ValueError('La red cambió o falta confirmar el destino.')
+            if not self._identidad or self._identidad.get('adaptador') not in self._adaptadores:
+                raise ValueError('Todavía no se reconoce un adaptador para este router.')
+            clave = secrets.token_urlsafe(32)
+            sesion = {'adaptador': self._identidad['adaptador'], 'clave': clave, 'vence': self._reloj() + 1800, 'verificada': False}
+            if sesion['adaptador'] == 'technicolor':
+                huella = datos.get('huella_confirmada')
+                if (not isinstance(huella, str) or not re.fullmatch('[0-9a-f]{64}', huella)
+                        or huella != self._identidad.get('huella_sha256')):
+                    raise ValueError('Confirma el certificado del router actual antes de acceder.')
+                sesion['huella'] = huella
+            if 'usuario' in datos:
+                usuario, password = datos.get('usuario'), datos.get('password')
+                if (not isinstance(usuario, str) or not 1 <= len(usuario) <= 128
+                        or not isinstance(password, str) or not 1 <= len(password) <= 1024):
+                    raise ValueError('Credenciales no compatibles.')
+                sesion.update(usuario=usuario, password=password)
+            else:
+                if sesion['adaptador'] != 'sercomm':
+                    raise ValueError('Este equipo requiere su formulario de acceso.')
+                cookie, csrf = datos.get('cookie'), datos.get('csrf')
+                if (not isinstance(cookie, str) or not 1 <= len(cookie) <= 4096
+                        or any(ord(c) < 32 or ord(c) > 126 for c in cookie)
+                        or not re.search(r'(?:^|;\s*)session_id=[^;\s]+', cookie)
+                        or not isinstance(csrf, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,256}', csrf)):
+                    raise ValueError('La sesión del panel tiene un formato no compatible.')
+                sesion.update(cookie=cookie, csrf=csrf)
+            self._sesion = sesion
+            self._etapa_error = None
+            self._diagnostico_acceso = []
+            self._estado = 'verificando_compatibilidad'
+            self._despertar.set()
+            return clave
+
+    def _expirar(self):
+        ahora = self._reloj()
+        if self._sesion and ahora >= self._sesion['vence']:
+            self._limpiar('autorizacion_expirada')
+        if self._sesion:
+            self._administracion.estado(self._sesion)
+        while self._series and ahora - self._series[0]['_t'] > 600:
+            self._series.popleft()
+        self._tablas = {k: v for k, v in self._tablas.items() if ahora - v['_t'] <= 600}
+
+    def revocar(self, clave):
+        with self._lock:
+            self._expirar()
+            if not self._permitido(clave):
+                raise PermissionError()
+            self._limpiar('requiere_autorizacion')
+
+    def _permitido(self, clave):
+        return bool(self._sesion and isinstance(clave, str) and clave.isascii()
+                    and secrets.compare_digest(self._sesion['clave'], clave))
+
+    def _capacidades(self):
+        """Publica solo funciones del adaptador registrado, nunca del proveedor."""
+        nombre = (self._identidad or {}).get('adaptador')
+        adaptador = self._adaptadores.get(nombre)
+        return {'lectura': adaptador is not None,
+                'administracion': nombre == 'sercomm' and adaptador is not None,
+                'fuente_inventario': adaptador.fuente_inventario if adaptador else None,
+                'trafico': nombre == 'sercomm' and adaptador is not None}
+
+    def estado(self, clave=None):
+        with self._lock:
+            self._expirar()
+            permitido = self._permitido(clave)
+            salida = {'estado': self._estado, 'etapa_error': self._etapa_error,
+                      'diagnostico_acceso': deepcopy(self._diagnostico_acceso), 'id_contexto': self._id,
+                      'gateway_candidato': self._red['gateway'] if self._red else None,
+                      'identificacion': deepcopy(self._identidad),
+                      'capacidades': self._capacidades(),
+                      'autorizada': permitido, 'tablas': {}, 'series': [], 'resumen_trafico': [], 'trafico_por_periodo': {},
+                      'intervalo_s': 5, 'retencion_s': 600}
+            if permitido:
+                salida['administracion'] = self._administracion.estado(self._sesion)
+                salida['contexto'] = deepcopy(self._red)
+                salida['restante_s'] = max(0, self._sesion['vence'] - self._reloj())
+                for fuente, tabla in self._tablas.items():
+                    copia = deepcopy(tabla)
+                    copia['antiguedad_s'] = max(0, self._reloj() - copia.pop('_t'))
+                    copia['vigencia'] = 'vigente' if copia['antiguedad_s'] <= 20 else 'desactualizado'
+                    copia['ultimo_intento'] = 'error' if fuente in self._fallos else 'correcto'
+                    salida['tablas'][fuente] = copia
+                # Edad continua para representar huecos sin depender del reloj civil del navegador.
+                instante = self._reloj()
+                salida['series'] = [{**{k: v for k, v in p.items() if k != '_t'},
+                                     'antiguedad_s': max(0, instante - p['_t']),
+                                     'bytes_recibidos': str(p['bytes_recibidos']) if p.get('bytes_recibidos') is not None else None,
+                                     'bytes_enviados': str(p['bytes_enviados']) if p.get('bytes_enviados') is not None else None} for p in self._series]
+                salida['trafico_por_periodo'] = {str(periodo): resumir_trafico(self._series, instante, periodo)
+                                               for periodo in (60, 300, 600)}
+                salida['resumen_trafico'] = salida['trafico_por_periodo']['600']
+            return salida
+
+    def _vigente(self, sesion, red):
+        # Se consulta de nuevo antes de cada petición para no reutilizar la sesión
+        # en otra vivienda, incluso si el cambio ocurre durante el ciclo.
+        actual = self._sincronizar()
+        with self._lock:
+            self._expirar()
+            return not self._parada.is_set() and self._sesion is sesion and actual == red
+
+    def ciclo(self):
+        red = self._sincronizar()
+        if red and (self._identidad is None or ((not self._identidad.get('adaptador')
+                    or ((self._identidad.get('estado') == 'certificado_pendiente'
+                         or self._estado == 'certificado_router_cambiado') and not self._sesion))
+                    and self._reloj() - self._intento_identidad >= 60)):
+            self._intento_identidad = self._reloj()
+            identidad = self._identificar(red['gateway'])
+            if self._sincronizar() != red:
+                return
+            with self._lock:
+                self._identidad = identidad
+        with self._lock:
+            self._expirar()
+            sesion = self._sesion
+        if not red or not sesion:
+            return
+        etapa = 'inicio'
+        adaptador = self._adaptadores[sesion['adaptador']]
+        try:
+            if 'password' in sesion:
+                with self._lock:
+                    if self._sesion is not sesion or 'password' not in sesion:
+                        return
+                    password = sesion.pop('password')
+                    usuario = sesion.pop('usuario')
+                try:
+                    opciones = {'huella': sesion['huella']} if sesion['adaptador'] == 'technicolor' else {}
+                    acceso = adaptador.autenticar(red['gateway'], usuario, password,
+                                                 lambda: self._vigente(sesion, red), **opciones)
+                finally:
+                    password = ''
+                if not self._vigente(sesion, red):
+                    return
+                with self._lock:
+                    sesion['acceso'] = acceso
+                    if sesion['adaptador'] == 'sercomm':
+                        sesion.update(acceso)
+            if not sesion['verificada']:
+                if not self._vigente(sesion, red):
+                    return
+                etapa = 'perfil_router' if sesion['adaptador'] == 'technicolor' else 'script_lectura'
+                adaptador.verificar(red['gateway'], sesion.get('acceso', sesion))
+                if not self._vigente(sesion, red):
+                    return
+                with self._lock:
+                    sesion['verificada'] = True
+                    if sesion['adaptador'] == 'technicolor':
+                        self._identidad = {**self._identidad, 'nombre': adaptador.nombre,
+                                           'estado': 'compatible', 'mensaje': None}
+            if not self._vigente(sesion, red):
+                return
+            etapa = 'validacion_sesion'
+            adaptador.validar_sesion(red['gateway'], sesion.get('acceso', sesion))
+            fallos = False
+            diagnostico_fuentes = []
+            for fuente in adaptador.fuentes:
+                if not self._vigente(sesion, red):
+                    return
+                try:
+                    inicio = self._reloj()
+                    normal = adaptador.leer(red['gateway'], fuente, sesion.get('acceso', sesion))
+                    if normal['estado'] != 'lectura_correcta':
+                        raise ValueError()
+                    t = self._reloj()
+                    if t - inicio > getattr(adaptador, 'plazo_lectura_s', 8):
+                        raise ValueError()
+                except ErrorRouter as error:
+                    if str(error) == 'autorizacion_rechazada':
+                        raise
+                    fallos = True
+                    diagnostico_fuentes.append({'paso': 'equipos' if sesion['adaptador'] == 'technicolor' else 'tablas',
+                                                'resultado': str(error)})
+                    with self._lock:
+                        self._fallos.add(fuente)
+                        self._bases = {k: v for k, v in self._bases.items() if k[0] != fuente}
+                    continue
+                except ValueError:
+                    fallos = True
+                    diagnostico_fuentes.append({'paso': 'interpretar_tabla', 'resultado': 'formato_no_compatible'})
+                    with self._lock:
+                        self._fallos.add(fuente)
+                        self._bases = {k: v for k, v in self._bases.items() if k[0] != fuente}
+                    continue
+                if not self._vigente(sesion, red):
+                    return
+                with self._lock:
+                    if self._sesion is not sesion:
+                        return
+                    self._fallos.discard(fuente)
+                    fecha = datetime.now(timezone.utc).isoformat()
+                    # Contadores como cadenas en HTTP: JavaScript no representa
+                    # exactamente todos los enteros de 64 bits. Cálculo en Python.
+                    muestra = {'_t': t, 'fecha': fecha, 'equipos': normal['equipos'],
+                               'recuento': normal['recuento_filas_interpretadas'], 'wan': []}
+                    presentes = set()
+                    for contador in normal['wan']:
+                        clave = (fuente, contador['interfaz'])
+                        presentes.add(clave)
+                        previa = self._bases.get(clave)
+                        rx, tx = contador['bytes_rx'], contador['bytes_tx']
+                        punto = {'_t': t, 'fecha': fecha, 'fuente': fuente,
+                                 'interfaz': contador['interfaz'], 'familia_ip': contador['familia_ip'],
+                                 'bajada_mbps': None, 'subida_mbps': None, 'intervalo_s': None,
+                                 'bytes_recibidos': None, 'bytes_enviados': None,
+                                 'motivo': 'referencia_inicial'}
+                        if previa:
+                            dt = t - previa[0]
+                            punto['motivo'] = 'intervalo_no_comparable'
+                            if 0 < dt <= 20 and rx >= previa[1] and tx >= previa[2]:
+                                punto.update(bajada_mbps=(rx - previa[1]) * 8 / dt / 1e6,
+                                             subida_mbps=(tx - previa[2]) * 8 / dt / 1e6,
+                                             intervalo_s=dt, motivo='intervalo_valido',
+                                             bytes_recibidos=rx - previa[1], bytes_enviados=tx - previa[2])
+                        self._series.append(punto)
+                        self._bases[clave] = (t, rx, tx)
+                        muestra['wan'].append({**contador, 'bytes_rx': str(rx), 'bytes_tx': str(tx)})
+                    self._bases = {k: v for k, v in self._bases.items() if k[0] != fuente or k in presentes}
+                    self._tablas[fuente] = muestra
+            with self._lock:
+                if self._sesion is sesion:
+                    self._estado = 'error_fuente' if fallos else 'lectura_correcta'
+                    self._etapa_error = 'lectura_tablas' if fallos else None
+                    self._diagnostico_acceso = diagnostico_fuentes
+        except ErrorRouter as error:
+            with self._lock:
+                if self._sesion is sesion:
+                    transitorio = str(error) in {
+                        'http_invalido_router', 'error_http_router', 'tiempo_agotado_router',
+                        'conexion_fallida_router', 'error_lectura_router'}
+                    if transitorio and ('acceso' in sesion or 'cookie' in sesion) and not hasattr(error, 'etapa'):
+                        # Solo se reintentan GET con la sesión ya obtenida. Nunca login.
+                        self._estado = str(error)
+                        self._bases.clear()
+                        self._fallos.update(self._tablas)
+                    else:
+                        self._limpiar(str(error))
+                    self._etapa_error = getattr(error, 'etapa', etapa)
+                    self._diagnostico_acceso = getattr(error, 'diagnostico', [])
+
+    def administrar(self, clave, accion, datos):
+        """API de administración: sesión aislada, contexto actual y un cambio a la vez."""
+        red = self._sincronizar()
+        with self._lock:
+            self._expirar()
+            if not self._permitido(clave) or not self._sesion.get('verificada'):
+                raise PermissionError('Primero conecta el router y espera una lectura válida.')
+            sesion = self._sesion
+            if sesion['adaptador'] != 'sercomm':
+                raise PermissionError('Este equipo todavía no tiene administración comprobada.')
+        if not self._operacion.acquire(blocking=False):
+            raise ValueError('Hay una operación en curso. Espera su resultado.')
+        try:
+            def vigente():
+                if not self._vigente(sesion, red):
+                    return False
+                return accion == 'autorizar' or self._administracion.estado(sesion)['autorizada']
+
+            def pedir(ruta, campos=None):
+                if not vigente():
+                    raise PermissionError('El permiso caducó o cambió la red.')
+                return self._transporte_admin(red['gateway'], ruta, sesion['cookie'], sesion['csrf'],
+                                              campos, vigente)
+
+            with self._lock:
+                tabla = self._tablas.get('dhcp-json', {})
+                propias = [e['mac'].upper() for e in tabla.get('equipos', [])
+                           if e.get('mac') and e.get('ipv4') == red['ipv4_local'].split('/')[0]
+                           and self._reloj() - tabla.get('_t', float('-inf')) <= 20]
+            return self._administracion.actuar(sesion, Sercomm(pedir), accion, datos, propias)
+        finally:
+            self._operacion.release()
+
+    def ejecutar(self):
+        while not self._parada.is_set():
+            self._despertar.clear()
+            try:
+                self.ciclo()
+            except Exception:
+                with self._lock:
+                    self._limpiar('error_recoleccion')
+            self._despertar.wait(5)
+
+    def detener(self):
+        self._parada.set()
+        self._despertar.set()
+        with self._lock:
+            self._limpiar('detenido')

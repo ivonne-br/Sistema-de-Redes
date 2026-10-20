@@ -154,6 +154,15 @@ El sistema deberá comunicar el resultado de la solicitud y obtener nuevas obser
 
 El sistema deberá retirar los privilegios administrativos cuando la persona finalice la autorización o esta expire. La sesión conservará las capacidades de Invitado y necesitará una nueva autorización para realizar modificaciones. El cierre no implicará revertir operaciones ya enviadas.
 
+### RF-24. Iniciar la aplicación local
+
+**Aplicación:** obligatorio.
+
+La persona deberá poder abrir la aplicación instalada en su computadora e iniciar
+backend y dashboard sin ejecutar comandos manuales. El iniciador comprobará la
+disponibilidad de la API, informará errores e impedirá duplicar la recolección
+prevista para una instalación. El mecanismo de empaquetado queda por implementar.
+
 ## 4. Requisitos no funcionales
 
 Todos los requisitos de esta sección son obligatorios para el MVP. Las verificaciones específicas de credenciales se aplicarán cuando el sistema las utilice.
@@ -191,6 +200,14 @@ Las reglas y cálculos deberán poder verificarse con entradas conocidas sin dep
 ### RNF-08. Control de permisos administrativos
 
 El backend deberá comprobar la autorización vigente para cada modificación, vinculándola a la sesión y al router correspondientes. Los controles de la interfaz no sustituirán esta comprobación. Una sesión autorizada no concederá privilegios a otros visitantes.
+
+### RNF-09. Ciclo de vida y diagnóstico de fuentes
+
+El cierre de la aplicación deberá detener las tareas y procesos controladamente.
+El diagnóstico distinguirá no ejecución, fallo del proceso, captura vacía,
+problema de decodificación y error de interpretación, sin registrar datos
+identificables ni deducir una causa de permisos únicamente por salida vacía.
+Una fuente fallida no desactivará silenciosamente la información sobre calidad.
 
 ## 5. Propuestas para etapas posteriores
 

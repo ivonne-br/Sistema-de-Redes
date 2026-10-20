@@ -74,7 +74,6 @@ Una misma observación no deberá duplicarse por aparecer varias veces en la mis
 
 **Interpretación:** representa dispositivos observados, no una garantía de todos los dispositivos conectados. Una dirección IP puede cambiar y una MAC no se tratará como identificador universal e inmutable de una persona o equipo.
 
-
 ### M-04. Presencia y cambios de presencia
 
 Identificar nuevas observaciones y cambios en la visibilidad de un dispositivo.
@@ -200,3 +199,61 @@ Los siguientes ejemplos son sintéticos y sirven para verificar la implementaci�
 | Un ciclo de descubrimiento fallido | No aumenta el contador de ausencias ni convierte el inventario en cero. |
 | Incremento de 1 000 000 bytes en 5 s | Volumen de 1 MB y tasa de 1.6 Mbps para esa entidad y dirección. |
 | Contador menor que en la lectura anterior sin explicación validada | Intervalo inválido y nueva referencia de contador. |
+
+## 9. Reglas del panel de observaciones
+
+El análisis público utiliza las capturas en memoria de los monitores web y de
+conectividad. Consultar `/api/v1/observaciones` no inicia mediciones ni utiliza
+la sesión privada del router. Los parámetros de esta sección describen las
+reglas implementadas del panel; los valores piloto de la sección 5 no deben
+interpretarse como configuración ya aplicada.
+
+| Resultado | Evidencia y criterio |
+| --- | --- |
+| Orientación principal | Se prioriza un problema de conexión segura, una visita fallida, fallos anteriores a una visita correcta y una búsqueda de nombre fallida. Sin una lectura web vigente no se afirma acceso actual. Una búsqueda de nombre puede explicarse por separado. |
+| Búsqueda de nombres | Una única lectura DNS vigente, de menos de 120 s, del contexto activo. Una búsqueda correcta no prueba que la página abra; un fallo no invalida una visita HTTPS correcta. Los destinos de ambas pruebas pueden diferir. |
+| Recorrido dentro/fuera de la red | Contextos normalizados iguales, una prueba HTTPS y una serie completa por cada ámbito, todas de menos de 90 s y separadas como máximo 30 s. La coincidencia temporal no atribuye causas. |
+| Comparación de pruebas web | Dos ventanas: edades `[0, 300)` y `[300, 600)` s; al menos tres intentos evaluables por ventana, del mismo contexto y destino, con identificadores únicos. Compara proporciones de intentos no correctos, no duración de una caída. |
+| Comparación de tiempos de respuesta | Las mismas ventanas, separadas por destino del monitor de conectividad. Exige tres series, seis respuestas y al menos 80 % de intentos evaluables sobre programados en cada ventana. Promedio ponderado por número de respuestas; los silencios no tienen RTT. Se exige una serie actual vigente de menos de 90 s. |
+| Problemas repetidos | Dos o más intentos HTTPS no correctos en los últimos diez minutos, del mismo contexto y destino y con identificadores únicos. No implica fallos consecutivos ni una interrupción continua. |
+| Respuesta posterior | Lectura HTTPS actual correcta y al menos un intento fallido estrictamente anterior por edad continua. Se informa que el sitio respondió después; no se declara recuperación definitiva. |
+| Evidencia reciente | Intentos ordenados por edad continua, mostrando fecha y destino. Los errores de medición se identifican aparte y no cuentan como fallos de Internet. No se rellenan huecos. |
+
+Una diferencia entre promedios describe las muestras recibidas; no clasifica la
+red como sana, saturada o averiada ni mide capacidad de descarga. Si faltan datos,
+la comparación permanece no disponible. Al caducar la fuente o fallar la consulta
+de la API, la interfaz no presenta sus conclusiones anteriores como actuales.
+
+Las recomendaciones son pasos manuales de comprobación. No cambian DNS, Wi-Fi,
+router ni permisos. Relacionar consumo con problemas requiere evidencia de tráfico
+autorizada, periodos compatibles y reglas adicionales; estas observaciones públicas
+no identifican qué dispositivo consume más ni causan operaciones administrativas.
+
+## 10. Cantidades observadas en conexiones del router
+
+El resumen autorizado de tráfico ofrece ventanas de 60, 300 y 600 segundos,
+calculadas con el reloj continuo. Para cada fuente, familia IP e interfaz suma
+las diferencias de bytes de intervalos comparables completos dentro de la ventana.
+No reparte proporcionalmente un intervalo que cruce su comienzo. Las cantidades
+exactas se entregan como cadenas de bytes; MB usa 1.000.000 de bytes.
+
+Un intervalo requiere dos lecturas separadas por más de cero y como máximo 20
+segundos, sin descenso de ninguno de los contadores. El inicio, los reinicios,
+las pausas y los fallos de lectura no aportan una cantidad estimada. Sin intervalos
+válidos, la cantidad es `null`; con intervalos válidos sin incremento, es cero.
+
+Cada resumen informa segundos medidos, segundos del periodo sin medición
+utilizable, intervalos válidos y puntos excluidos. El tiempo sin medición incluye
+el anterior al inicio del recolector: no equivale a tiempo sin Internet. La fecha
+de la última lectura se conserva aunque falle la siguiente consulta.
+
+El selector de periodo controla las cantidades y las gráficas del router. Cada
+punto de tasa se sitúa al final de su intervalo; puede aparecer junto al inicio
+de una ventana sin contribuir a su suma, si parte del intervalo queda fuera.
+La elección de subida o bajada en la gráfica no modifica el total de ambas
+mostrado en las tarjetas. La consulta no genera nuevas lecturas del router.
+
+No se agregan interfaces ni familias IP entre sí mientras no esté comprobado su
+alcance. Tampoco se atribuyen estos datos a dispositivos. Todos estos resúmenes
+requieren la misma autorización temporal que las tablas y series del router;
+el Invitado no los recibe. Solo el periodo elegido se guarda como preferencia.

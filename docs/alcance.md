@@ -123,6 +123,9 @@ Los resultados no se considerarán automáticamente representativos de todos los
 
 Una vez comprobado el MVP, se podrán plantear incrementos para:
 
+- Habilitar consulta desde teléfonos en la red de la instalación, definiendo
+  acceso, transporte y sesiones; mantener un recolector local activo.
+- Adaptar el recolector y el empaquetado a otros sistemas operativos.
 - Probar otros modelos de router y proveedores de Internet.
 - Implementar almacenamiento histórico y análisis temporal.
 - Mejorar las explicaciones y recomendaciones.
@@ -140,7 +143,7 @@ Los cambios de contraseña, SSID o restricciones de acceso pueden interrumpir la
 
 Se considerará alcanzada la primera etapa funcional cuando el prototipo pueda ejecutarse en el entorno definido y permita, de manera integrada:
 
-1. Reconocer la red local seleccionada para el monitoreo.
+1. Abrir la aplicación instalada, iniciar su backend local y presentar el dashboard sin comandos manuales; reconocer la red local seleccionada para el monitoreo.
 2. Detectar dispositivos observables y contrastar los resultados con el inventario de prueba.
 3. Obtener y presentar información básica de los dispositivos cuando esté disponible.
 4. Realizar mediciones periódicas de conectividad y calcular los indicadores definidos.

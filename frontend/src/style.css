@@ -1,0 +1,100 @@
+/* Presentación del resumen integrado y sus tablas: navegación, confirmación modal, paneles adaptables y foco de teclado; recibe clases de Vue y produce una guía legible y paneles adaptables, sin alterar datos ni permisos. */
+:root { font-family: system-ui, sans-serif; color: #172c37; background: #f1f5f6; line-height: 1.6; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 1120px; margin: auto; padding: 32px 24px; }
+header { padding: 10px 0 24px; max-width: 850px; }
+h1 { font-size: clamp(1.8rem, 4vw, 2.6rem); line-height: 1.2; margin: 8px 0 20px; }
+h2 { font-size: 1.3rem; margin-top: 0; }
+.ceja { font-size: .85rem; font-weight: 700; color: #365c65; }
+section { background: white; border: 1px solid #cbd9de; border-radius: 10px; padding: 24px; margin: 22px 0; }
+.aviso { border-left: 4px solid #775013; background: #fff4dd; padding: 12px 18px; }
+.aviso p { margin: 6px 0; }
+.indicadores { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 20px; }
+dt { font-size: .9rem; color: #465d68; }
+dd { font-size: 1.12rem; font-weight: 650; margin: 6px 0; }
+.contexto { overflow-wrap: anywhere; }
+.secundario, footer { font-size: .9rem; color: #465d68; }
+.tabla { overflow-x: auto; }
+summary { cursor: pointer; font-weight: 650; padding: 12px 0; }
+.diagnostico { margin: 22px 0; border-top: 1px solid #cbd9de; }
+table { border-collapse: collapse; width: 100%; text-align: left; font-size: .9rem; }
+caption { text-align: left; padding: 10px 0; color: #465d68; }
+th, td { padding: 12px; border-bottom: 1px solid #d5dfe3; }
+th { background: #edf3f5; }
+.mono { font-family: ui-monospace, monospace; white-space: nowrap; }
+.eventos { padding-left: 24px; }
+.eventos li { padding: 12px 0; border-bottom: 1px solid #d5dfe3; }
+.eventos span { display: block; overflow-wrap: anywhere; white-space: normal; }
+:focus-visible { outline: 3px solid #006c85; outline-offset: 4px; }
+.navegacion { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 24px; }
+.navegacion a { background: #163f4b; color: white; padding: 10px 16px; border-radius: 8px; text-decoration: none; }
+.paneles-conexion { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; }
+.paneles-conexion section { margin-top: 0; min-width: 0; }
+.resultado-principal { font-size: 1.15rem; font-weight: 650; border-left: 4px solid #006c85; padding-left: 14px; }
+.resumen-destino { background: #edf3f5; border-radius: 6px; padding: 12px; margin: 12px 0; }
+.resumen-destino p { margin: 6px 0; }
+.tablero { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; }
+.panel { min-width: 0; }
+.panel.completo { grid-column: 1 / -1; }
+.panel section { margin: 0; }
+.opciones-paneles { padding: 16px; background: white; border: 1px solid #cbd9de; margin: 12px 0; }
+.opciones-paneles label { display: block; margin: 8px 0; }
+.controles-panel { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px; background: #dde8ec; }
+button, select { font: inherit; padding: 6px 10px; }
+button { cursor: pointer; }
+button:disabled { cursor: default; }
+button[draggable] { cursor: grab; }
+@media (max-width: 850px) { .tablero { grid-template-columns: 1fr; } }
+pre { overflow-x: auto; background: #edf3f5; padding: 12px; }
+section, [id] { scroll-margin-top: 16px; }
+@media (max-width: 850px) { .paneles-conexion { grid-template-columns: 1fr; } }
+@media (max-width: 600px) { main { padding: 18px 12px; } section { padding: 18px 14px; } }
+
+/* Tamaños de panel elegidos por la persona; el contenido sigue accesible con teclado. */
+.accesos-paneles { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+.ayuda-panel { display: block; margin-left: 24px; }
+.opciones-paneles fieldset { margin: 12px 0; border: 1px solid #cbd9de; }
+.opciones-paneles fieldset button { margin: 4px; }
+.contenido-panel { min-width: 0; scroll-margin-top: 16px; }
+.contenido-panel.alto-compacto { max-height: 24rem; overflow: auto; }
+.contenido-panel.alto-amplio { max-height: 40rem; overflow: auto; }
+@media (max-width: 600px) {
+  .contenido-panel.alto-compacto, .contenido-panel.alto-amplio { max-height: none; overflow: visible; }
+  .controles-panel label, .controles-panel select { max-width: 100%; }
+}
+
+/* Gráficas compartidas: filtros con etiqueta, escala legible y tabla alternativa. */
+.filtros-grafica { display: flex; flex-wrap: wrap; gap: 12px; }
+.filtros-grafica label { display: flex; flex-direction: column; max-width: 100%; }
+.filtros-grafica select { max-width: 100%; }
+.evolucion svg { display: block; width: 100%; min-height: 160px; }
+.evolucion svg text { fill: #172c37; font-size: 13px; }
+.evolucion { min-width: 0; }
+
+/* La guía mantiene el orden de lectura; en pantallas estrechas cada paso ocupa una fila. */
+.guia-principal section { border-top: 4px solid #006c85; }
+.guia-principal > p { margin-top: -10px; }
+.pasos-conexion { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 28px; }
+.pasos-conexion > div { min-width: 0; border-top: 1px solid #d5dfe3; }
+.pasos-conexion h3 { font-size: 1.05rem; }
+.servicio-apoyo { margin: 24px 0; padding: 16px; border: 1px solid #cbd9de; border-radius: 8px; }
+@media (max-width: 700px) { .pasos-conexion { grid-template-columns: 1fr; } }
+
+/* El diálogo ocupa la capa superior del navegador, independiente del scroll. */
+.confirmacion-cierre {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: min(560px, calc(100% - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  padding: 24px;
+  border: 1px solid #cbd9de;
+  border-radius: 14px;
+  color: #172c37;
+  background: white;
+  box-shadow: 0 18px 70px #0005;
+}
+.confirmacion-cierre::backdrop { background: rgb(15 30 40 / 65%); }
+.confirmacion-cierre h3 { margin-top: 0; }
